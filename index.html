@@ -1960,8 +1960,53 @@ class FleetApp {
       const text = await file.text();
       const data = JSON.parse(text);
       if (!data.vehicles || !data.entries) throw new Error('Invalid file format');
-      
-      if (!confirm(`Import ${data.vehicles.length} vehicles and ${data.entries.length} entries? This will REPLACE all existing data!`)) return;
+
+      if (!confirm(`Import ${data.vehicles.length} vehicles and ${data.entries.length} entries? This will REPLACE all existing data!`)) { input.value = ''; return; }
+
+      // Decrypt/prepare everything under the CURRENT session's key BEFORE touching the
+      // database, so a wrong passcode or bad file never wipes out existing data.
+      const newVehicles = [];
+      const newEntries = [];
+
+      if (data.isEncrypted) {
+        if (!data.salt) throw new Error('Backup is missing salt data and cannot be decrypted');
+
+        // Try the currently-unlocked session key first (covers re-importing a backup
+        // into the same install it came from). Only prompt if that doesn't work.
+        let backupKey = this.cryptoKey;
+        const sample = data.vehicles[0] || data.entries[0];
+        let keyOk = !sample;
+        if (sample) {
+          try { await CryptoEngine.decrypt(sample.payload, backupKey); keyOk = true; } catch (e) { keyOk = false; }
+        }
+
+        if (!keyOk) {
+          const backupPasscode = prompt('This backup was encrypted with a different passcode or on a different device.\nEnter the passcode that was used to create it:');
+          if (!backupPasscode) { this.toast('Import cancelled', 'error'); input.value = ''; return; }
+          backupKey = await CryptoEngine.deriveKey(backupPasscode, new Uint8Array(data.salt));
+          if (sample) {
+            try { await CryptoEngine.decrypt(sample.payload, backupKey); } catch (e) { throw new Error('Incorrect passcode for this backup'); }
+          }
+        }
+
+        for (const v of data.vehicles) {
+          const decrypted = await CryptoEngine.decrypt(v.payload, backupKey);
+          newVehicles.push({ id: v.id, payload: await CryptoEngine.encrypt(decrypted, this.cryptoKey) });
+        }
+        for (const e of data.entries) {
+          const decrypted = await CryptoEngine.decrypt(e.payload, backupKey);
+          newEntries.push({ id: e.id, vehicleId: e.vehicleId, payload: await CryptoEngine.encrypt(decrypted, this.cryptoKey) });
+        }
+      } else {
+        for (const v of data.vehicles) {
+          const { id, ...rest } = v;
+          newVehicles.push({ id, payload: await CryptoEngine.encrypt(rest, this.cryptoKey) });
+        }
+        for (const e of data.entries) {
+          const { id, vehicleId, ...rest } = e;
+          newEntries.push({ id, vehicleId: vehicleId || this.currentVehicleId, payload: await CryptoEngine.encrypt(rest, this.cryptoKey) });
+        }
+      }
 
       const tx1 = this.db.transaction(['vehicles', 'entries'], 'readwrite');
       tx1.objectStore('vehicles').clear();
@@ -1971,23 +2016,12 @@ class FleetApp {
       const tx2 = this.db.transaction(['vehicles', 'entries'], 'readwrite');
       const vStore = tx2.objectStore('vehicles');
       const eStore = tx2.objectStore('entries');
-
-      if (data.isEncrypted) {
-        for (const v of data.vehicles) vStore.add(v);
-        for (const e of data.entries) eStore.add(e);
-      } else {
-        for (const v of data.vehicles) {
-          const { id, ...rest } = v;
-          const encrypted = await CryptoEngine.encrypt(rest, this.cryptoKey);
-          vStore.add({ payload: encrypted });
-        }
-        for (const e of data.entries) {
-          const { id, vehicleId, ...rest } = e;
-          const encrypted = await CryptoEngine.encrypt(rest, this.cryptoKey);
-          eStore.add({ vehicleId: vehicleId || this.currentVehicleId, payload: encrypted });
-        }
+      for (const v of newVehicles) {
+        if (v.id != null) vStore.add({ id: v.id, payload: v.payload }); else vStore.add({ payload: v.payload });
       }
-
+      for (const e of newEntries) {
+        if (e.id != null) eStore.add({ id: e.id, vehicleId: e.vehicleId, payload: e.payload }); else eStore.add({ vehicleId: e.vehicleId, payload: e.payload });
+      }
       await new Promise((r, j) => { tx2.oncomplete = r; tx2.onerror = () => j(tx2.error); });
 
       await this.loadVehicles();
@@ -2100,9 +2134,41 @@ document.addEventListener('DOMContentLoaded', () => {
 <script>
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js')
-      .then(reg => console.log('FleetLog SW registered:', reg.scope))
+    // updateViaCache:'none' stops the browser from serving sw.js itself out of the
+    // HTTP cache, which is the most common reason a bumped CACHE_NAME silently fails
+    // to be noticed — the browser never even fetches the new sw.js bytes to compare.
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
+      .then(reg => {
+        console.log('FleetLog SW registered:', reg.scope);
+
+        // Actively ask the browser to check for a newer sw.js on every load,
+        // instead of waiting for its infrequent background check.
+        reg.update().catch(() => {});
+
+        if (reg.waiting) {
+          reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+        }
+
+        reg.addEventListener('updatefound', () => {
+          const newWorker = reg.installing;
+          if (!newWorker) return;
+          newWorker.addEventListener('statechange', () => {
+            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+              newWorker.postMessage({ type: 'SKIP_WAITING' });
+            }
+          });
+        });
+      })
       .catch(err => console.error('FleetLog SW registration failed:', err));
+
+    // Once the new service worker takes control, the page is still running on
+    // old cached assets until it reloads once — so do that automatically.
+    let refreshingForUpdate = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (refreshingForUpdate) return;
+      refreshingForUpdate = true;
+      window.location.reload();
+    });
   });
 }
 </script>

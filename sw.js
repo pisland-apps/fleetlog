@@ -1,4 +1,4 @@
-const CACHE_NAME = 'fleetlog-pwa-v1.2';
+const CACHE_NAME = 'fleetlog-pwa-v1.3';
 
 const STATIC_ASSETS = [
   './',
@@ -19,6 +19,14 @@ const CDN_ASSETS = [
   'https://cdn.tailwindcss.com',
   'https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap'
 ];
+
+// Allow the page to force an already-installed, waiting service worker to
+// activate immediately (used by the update-detection code in index.html).
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
 
 // Install Event - Pre-cache Static Assets
 self.addEventListener('install', (event) => {
