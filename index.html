@@ -66,10 +66,10 @@
     .border, .border-gray-200 { border-color: #cbd5e1 !important; }
     .rounded-xl { border-radius: 4px !important; }
 
-    #dashboard { grid-template-columns: repeat(4, 1fr) !important; gap: 8px !important; margin-bottom: 12px !important; page-break-inside: avoid !important; }
-    #dashboard > div { padding: 8px 10px !important; border: 1px solid #bbb !important; }
-    #dashboard .text-2xl { font-size: 15px !important; }
-    #dashboard .text-xs { font-size: 8.5px !important; }
+    #dashboardRow { grid-template-columns: repeat(5, 1fr) !important; gap: 8px !important; margin-bottom: 12px !important; page-break-inside: avoid !important; }
+    .dash-card { padding: 8px 10px !important; border: 1px solid #bbb !important; }
+    .dash-card .text-2xl { font-size: 15px !important; }
+    .dash-card .text-xs { font-size: 8.5px !important; }
 
     #entriesCardHeader { padding: 0 0 6px 0 !important; border: none !important; background: transparent !important; margin-bottom: 6px !important; }
     #entriesCardHeader h2 { font-size: 13px !important; }
@@ -91,8 +91,6 @@
     }
     .particulars-text { font-size: 9px !important; }
 
-    #vehicleInfoFooter { margin-top: 10px !important; padding: 8px 0 0 0 !important; border: none !important; border-top: 1px solid #cbd5e1 !important; page-break-inside: avoid !important; }
-    #vehicleInfoFooter h3 { font-size: 9px !important; }
     #vehicleDetailContent { font-size: 9.5px !important; columns: 2 !important; column-gap: 24px !important; }
 
     .print-breakdown-table th, .print-breakdown-table td { font-size: 8.5px !important; padding: 3px 6px !important; }
@@ -105,7 +103,7 @@
     .text-red-600 { color: #dc2626 !important; }
   }
   @media print and (orientation: portrait) {
-    #dashboard { grid-template-columns: repeat(2, 1fr) !important; }
+    #dashboardRow { grid-template-columns: repeat(2, 1fr) !important; }
     #vehicleDetailContent { columns: 1 !important; }
   }
   .print-only { display: none; }
@@ -142,6 +140,9 @@
         Unlock App
       </button>
     </form>
+    <button id="biometricUnlockBtn" onclick="app.unlockWithBiometric()" class="hidden w-full py-3 bg-slate-800 hover:bg-slate-900 text-white font-semibold rounded-xl transition items-center justify-center gap-2">
+      <span>👆</span> Unlock with Fingerprint / Face ID
+    </button>
   </div>
 </div>
 
@@ -184,6 +185,7 @@
           <input type="file" id="importFile" class="hidden" accept=".json" onchange="app.importData(this)">
         </label>
         <button onclick="app.showAddVehicle()" class="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-900 font-semibold rounded-lg transition">＋ Add Vehicle</button>
+        <button id="biometricToggleBtn" onclick="app.toggleBiometric()" class="hidden px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition" title="Enable Fingerprint / Face ID Unlock">👆</button>
         <button onclick="app.lockApp()" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition text-amber-400" title="Lock App">🔒</button>
       </div>
     </div>
@@ -196,8 +198,36 @@
   </div>
 
   <main class="max-w-7xl mx-auto px-4 py-6">
-    <div id="vehicleSelector" class="mb-6 flex gap-3 overflow-x-auto pb-2 scrollbar-hide snap-x snap-mandatory no-print"></div>
-    <div id="dashboard" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6"></div>
+    <div id="vehicleSelector" class="mb-6 flex gap-3 overflow-x-auto pt-2 pb-2 scrollbar-hide snap-x snap-mandatory no-print"></div>
+    <div id="dashboardRow" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4 mb-6">
+      <div id="dashboard" class="contents"></div>
+
+      <!-- Vehicle Info Card (top row, alongside Current Book Value) -->
+      <div id="vehicleInfoFooter" class="dash-card hidden bg-white rounded-xl shadow-sm border border-gray-200 p-5 flex flex-col">
+        <h3 class="text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">Vehicle Details</h3>
+        <div id="vehicleDetailContent" class="text-sm text-gray-600 space-y-1 flex-1"></div>
+
+        <div id="printInitialValueSection" class="print-only mt-3 pt-2 border-t border-gray-200">
+          <h4 class="text-xs font-bold text-slate-800 uppercase tracking-wider mb-1">Initial Value Breakdown</h4>
+          <table class="w-full text-xs border border-gray-300 print-breakdown-table">
+            <thead class="bg-slate-100 text-slate-700 uppercase font-semibold">
+              <tr>
+                <th class="border border-gray-300 px-2 py-1 text-left">Date</th>
+                <th class="border border-gray-300 px-2 py-1 text-left">Particulars</th>
+                <th class="border border-gray-300 px-2 py-1 text-right">Amount</th>
+              </tr>
+            </thead>
+            <tbody id="printInitialValueTable"></tbody>
+          </table>
+        </div>
+
+        <div class="flex gap-2 no-print flex-wrap mt-3 pt-3 border-t border-gray-100">
+          <button onclick="app.showBankLoanLedger()" class="px-2.5 py-1.5 text-blue-700 bg-blue-50 border border-blue-300 hover:bg-blue-100 rounded-lg text-xs transition font-medium">🏦 Bank Loan</button>
+          <button onclick="app.editVehicle()" class="px-2.5 py-1.5 text-amber-600 hover:bg-amber-50 border border-amber-200 rounded-lg text-xs transition">✏️ Edit Vehicle</button>
+          <button onclick="app.deleteVehicle()" class="px-2.5 py-1.5 text-red-600 hover:bg-red-50 border border-red-200 rounded-lg text-xs transition">🗑️ Delete Vehicle</button>
+        </div>
+      </div>
+    </div>
 
     <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden fade-in">
       <div id="entriesCardHeader" class="px-6 py-4 border-b border-gray-200 flex flex-wrap items-center justify-between gap-3 bg-gray-50">
@@ -249,34 +279,6 @@
       </table>
     </div>
 
-    <!-- Vehicle Info Footer -->
-    <div id="vehicleInfoFooter" class="mt-6 bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-      <div class="flex items-center justify-between flex-wrap gap-3">
-        <div class="w-full">
-          <h3 class="text-sm font-semibold text-slate-700 uppercase tracking-wider mb-2">Vehicle Details</h3>
-          <div id="vehicleDetailContent" class="text-sm text-gray-600 space-y-1"></div>
-          
-          <div id="printInitialValueSection" class="print-only mt-3 pt-2 border-t border-gray-200">
-            <h4 class="text-xs font-bold text-slate-800 uppercase tracking-wider mb-1">Initial Value Breakdown</h4>
-            <table class="w-full text-xs border border-gray-300 print-breakdown-table">
-              <thead class="bg-slate-100 text-slate-700 uppercase font-semibold">
-                <tr>
-                  <th class="border border-gray-300 px-2 py-1 text-left">Date</th>
-                  <th class="border border-gray-300 px-2 py-1 text-left">Particulars</th>
-                  <th class="border border-gray-300 px-2 py-1 text-right">Amount</th>
-                </tr>
-              </thead>
-              <tbody id="printInitialValueTable"></tbody>
-            </table>
-          </div>
-        </div>
-        <div class="flex gap-2 no-print flex-wrap mt-3">
-          <button onclick="app.showBankLoanLedger()" class="px-3 py-1.5 text-blue-700 bg-blue-50 border border-blue-300 hover:bg-blue-100 rounded-lg text-sm transition font-medium">🏦 Bank Loan</button>
-          <button onclick="app.editVehicle()" class="px-3 py-1.5 text-amber-600 hover:bg-amber-50 border border-amber-200 rounded-lg text-sm transition">✏️ Edit Vehicle</button>
-          <button onclick="app.deleteVehicle()" class="px-3 py-1.5 text-red-600 hover:bg-red-50 border border-red-200 rounded-lg text-sm transition">🗑️ Delete Vehicle</button>
-        </div>
-      </div>
-    </div>
   </main>
 </div>
 
@@ -336,6 +338,14 @@
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">Year</label>
         <input type="number" id="vehicleYear" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition" placeholder="2010">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Duty Status</label>
+        <select id="vehicleDutyStatus" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition">
+          <option value="">— Not Set —</option>
+          <option value="duty_free">Duty Free</option>
+          <option value="duty_paid">Duty Paid</option>
+        </select>
       </div>
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">Initial Value Breakdown</label>
@@ -540,7 +550,7 @@ class CryptoEngine {
       },
       keyMaterial,
       { name: "AES-GCM", length: 256 },
-      false,
+      true,
       ["encrypt", "decrypt"]
     );
   }
@@ -589,6 +599,7 @@ class FleetApp {
     this.cryptoKey = null;
     this.salt = null;
     this.isSetup = false;
+    this.biometricRecord = null;
   }
 
   async init() {
@@ -628,7 +639,8 @@ class FleetApp {
     const tx = this.db.transaction('config', 'readonly');
     const store = tx.objectStore('config');
     const authReq = store.get('auth');
-    
+    const bioReq = store.get('biometric');
+
     authReq.onsuccess = () => {
       const res = authReq.result;
       if (res) {
@@ -645,6 +657,158 @@ class FleetApp {
       }
       document.getElementById('lockScreen').classList.remove('hidden');
     };
+
+    bioReq.onsuccess = () => {
+      this.biometricRecord = bioReq.result || null;
+      this.showBiometricUnlockButton();
+    };
+  }
+
+  isBiometricPlatformSupported() {
+    return !!(window.PublicKeyCredential && navigator.credentials && window.isSecureContext);
+  }
+
+  showBiometricUnlockButton() {
+    const bioBtn = document.getElementById('biometricUnlockBtn');
+    if (!bioBtn) return;
+    if (this.biometricRecord && this.isBiometricPlatformSupported()) {
+      bioBtn.classList.remove('hidden');
+      bioBtn.classList.add('flex');
+    } else {
+      bioBtn.classList.add('hidden');
+      bioBtn.classList.remove('flex');
+    }
+  }
+
+  refreshBiometricToggle() {
+    const toggleBtn = document.getElementById('biometricToggleBtn');
+    if (!toggleBtn) return;
+    if (this.isBiometricPlatformSupported()) {
+      toggleBtn.classList.remove('hidden');
+      toggleBtn.classList.toggle('text-amber-400', !!this.biometricRecord);
+      toggleBtn.title = this.biometricRecord ? 'Disable Fingerprint / Face ID Unlock' : 'Enable Fingerprint / Face ID Unlock';
+    } else {
+      toggleBtn.classList.add('hidden');
+    }
+  }
+
+  bufToBase64(buf) {
+    const bytes = new Uint8Array(buf);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    return btoa(binary);
+  }
+
+  base64ToBuf(str) {
+    const binary = atob(str);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes.buffer;
+  }
+
+  async enrollBiometric() {
+    if (!this.cryptoKey) { this.toast('Unlock the app first', 'error'); return; }
+    if (!this.isBiometricPlatformSupported()) {
+      this.toast('Fingerprint / Face ID unlock is not supported on this device or browser', 'error');
+      return;
+    }
+    try {
+      const challenge = crypto.getRandomValues(new Uint8Array(32));
+      const userId = crypto.getRandomValues(new Uint8Array(16));
+      const credential = await navigator.credentials.create({
+        publicKey: {
+          challenge,
+          rp: { name: 'FleetLog' },
+          user: { id: userId, name: 'fleetlog-user', displayName: 'FleetLog User' },
+          pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+          authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', requireResidentKey: false },
+          timeout: 60000,
+          attestation: 'none'
+        }
+      });
+      if (!credential) throw new Error('Enrollment cancelled');
+
+      // Export the active encryption key and wrap it behind a random device-local
+      // key. The fingerprint/Face ID prompt gates access to it on future unlocks.
+      const rawKey = await crypto.subtle.exportKey('raw', this.cryptoKey);
+      const wrappingKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const wrappedKey = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, wrappingKey, rawKey);
+      const rawWrappingKey = await crypto.subtle.exportKey('raw', wrappingKey);
+
+      const record = {
+        key: 'biometric',
+        credentialId: this.bufToBase64(credential.rawId),
+        wrappingKey: this.bufToBase64(rawWrappingKey),
+        iv: Array.from(iv),
+        wrappedKey: this.bufToBase64(wrappedKey)
+      };
+
+      const tx = this.db.transaction('config', 'readwrite');
+      tx.objectStore('config').put(record);
+      await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = j; });
+
+      this.biometricRecord = record;
+      this.refreshBiometricToggle();
+      this.toast('Fingerprint / Face ID unlock enabled');
+    } catch (err) {
+      this.toast('Could not enable biometric unlock: ' + err.message, 'error');
+    }
+  }
+
+  async disableBiometric() {
+    try {
+      const tx = this.db.transaction('config', 'readwrite');
+      tx.objectStore('config').delete('biometric');
+      await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = j; });
+      this.biometricRecord = null;
+      this.refreshBiometricToggle();
+      this.toast('Fingerprint / Face ID unlock disabled');
+    } catch (err) {
+      this.toast('Could not disable biometric unlock: ' + err.message, 'error');
+    }
+  }
+
+  async toggleBiometric() {
+    if (this.biometricRecord) {
+      if (confirm('Disable Fingerprint / Face ID unlock on this device?')) {
+        await this.disableBiometric();
+      }
+    } else {
+      await this.enrollBiometric();
+    }
+  }
+
+  async unlockWithBiometric() {
+    if (!this.biometricRecord) return;
+    try {
+      const challenge = crypto.getRandomValues(new Uint8Array(32));
+      const assertion = await navigator.credentials.get({
+        publicKey: {
+          challenge,
+          allowCredentials: [{ id: this.base64ToBuf(this.biometricRecord.credentialId), type: 'public-key' }],
+          userVerification: 'required',
+          timeout: 60000
+        }
+      });
+      if (!assertion) throw new Error('Authentication cancelled');
+
+      const wrappingKey = await crypto.subtle.importKey('raw', this.base64ToBuf(this.biometricRecord.wrappingKey), { name: 'AES-GCM' }, false, ['decrypt']);
+      const iv = new Uint8Array(this.biometricRecord.iv);
+      const rawKey = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, wrappingKey, this.base64ToBuf(this.biometricRecord.wrappedKey));
+      const cryptoKey = await crypto.subtle.importKey('raw', rawKey, { name: 'AES-GCM' }, true, ['encrypt', 'decrypt']);
+
+      const tx = this.db.transaction('config', 'readonly');
+      const req = tx.objectStore('config').get('auth');
+      const authRecord = await new Promise((r, j) => { req.onsuccess = () => r(req.result); req.onerror = j; });
+      const verified = await CryptoEngine.decrypt(authRecord.verifier, cryptoKey);
+      if (verified.check !== 'FLEETLOG_VALID') throw new Error('Key mismatch');
+
+      this.cryptoKey = cryptoKey;
+      this.unlockApp();
+    } catch (err) {
+      this.toast('Biometric unlock failed: ' + err.message, 'error');
+    }
   }
 
   async handleAuthSubmit(e) {
@@ -695,7 +859,8 @@ class FleetApp {
     document.getElementById('lockScreen').classList.add('hidden');
     document.getElementById('appContainer').classList.remove('hidden');
     document.getElementById('passcodeInput').value = '';
-    
+    this.refreshBiometricToggle();
+
     await this.loadVehicles();
     if (this.vehicles.length > 0) {
       await this.selectVehicle(this.vehicles[0].id);
@@ -711,6 +876,7 @@ class FleetApp {
     this.entries = [];
     document.getElementById('appContainer').classList.add('hidden');
     document.getElementById('lockScreen').classList.remove('hidden');
+    this.showBiometricUnlockButton();
   }
 
   async loadVehicles() {
@@ -837,11 +1003,17 @@ class FleetApp {
     }
     container.innerHTML = this.vehicles.map(v => {
       const isActive = v.id === this.currentVehicleId;
+      const dutyBadge = v.dutyStatus === 'duty_free'
+        ? `<span class="absolute -top-2 -right-2 px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wide bg-emerald-500 text-white shadow-sm border border-white rotate-6 select-none">Duty Free</span>`
+        : v.dutyStatus === 'duty_paid'
+        ? `<span class="absolute -top-2 -right-2 px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wide bg-blue-600 text-white shadow-sm border border-white rotate-6 select-none">Duty Paid</span>`
+        : '';
       return `
         <button onclick="app.selectVehicle(${v.id})" onmouseenter="app.showVehicleTooltip(event, ${v.id})" onmouseleave="app.hideVehicleTooltip()"
-          class="flex-shrink-0 snap-start px-4 py-3 rounded-xl border-2 transition-all text-left ${isActive
+          class="relative flex-shrink-0 snap-start px-4 py-3 rounded-xl border-2 transition-all text-left ${isActive
             ? 'border-amber-500 bg-amber-50 text-slate-900 shadow-md'
             : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:shadow-sm'}">
+          ${dutyBadge}
           <div class="font-semibold text-sm">${this.escape(v.name) || 'Unnamed'}</div>
           <div class="text-xs opacity-70">${this.escape(v.reg) || 'No Reg'}</div>
         </button>
@@ -936,24 +1108,24 @@ class FleetApp {
     const bookValue = (vehicle.initialValue || 0) - totalDepreciation;
 
     container.innerHTML = `
-      <div class="bg-white rounded-xl p-5 border border-gray-200 shadow-sm">
+      <div class="dash-card bg-white rounded-xl p-5 border border-gray-200 shadow-sm">
         <div class="text-xs text-gray-500 uppercase font-semibold mb-1">Current Book Value</div>
         <div class="text-2xl font-bold text-slate-800">${this.cur()}${this.fmt(bookValue)}</div>
         <div class="text-xs text-gray-400 mt-1">Initial Value: ${this.cur()}${this.fmt(vehicle.initialValue || 0)}</div>
       </div>
-      <div class="bg-white rounded-xl p-5 border border-gray-200 shadow-sm flex flex-col justify-between">
+      <div class="dash-card bg-white rounded-xl p-5 border border-gray-200 shadow-sm flex flex-col justify-between">
         <div>
           <div class="text-xs text-gray-500 uppercase font-semibold mb-1">Total Spent</div>
           <div class="text-2xl font-bold text-emerald-600">${this.cur()}${this.fmt(totalSpent)}</div>
         </div>
         ${breakdownHTML}
       </div>
-      <div class="bg-white rounded-xl p-5 border border-gray-200 shadow-sm">
+      <div class="dash-card bg-white rounded-xl p-5 border border-gray-200 shadow-sm">
         <div class="text-xs text-gray-500 uppercase font-semibold mb-1">Depreciation</div>
         <div class="text-2xl font-bold text-blue-600">${this.cur()}${this.fmt(totalDepreciation)}</div>
         <div class="text-xs text-gray-400 mt-1">Total written off</div>
       </div>
-      <div class="bg-white rounded-xl p-5 border border-gray-200 shadow-sm">
+      <div class="dash-card bg-white rounded-xl p-5 border border-gray-200 shadow-sm">
         <div class="text-xs text-gray-500 uppercase font-semibold mb-1">Last Odometer</div>
         <div class="text-2xl font-bold text-slate-800">${this.fmt(lastKm, 0)} <span class="text-sm font-normal text-gray-400">km</span></div>
         <div class="text-xs text-gray-400 mt-1">${this.entries.length} entries</div>
@@ -1089,6 +1261,7 @@ class FleetApp {
       <p><span class="font-medium text-slate-700">Registration:</span> ${this.escape(v.reg || '—')}</p>
       <p><span class="font-medium text-slate-700">Year:</span> ${v.year || '—'}</p>
       <p><span class="font-medium text-slate-700">Initial Value:</span> ${this.cur()}${this.fmt(v.initialValue || 0)}</p>
+      ${v.dutyStatus ? `<p><span class="font-medium text-slate-700">Duty Status:</span> <span class="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide ${v.dutyStatus === 'duty_free' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}">${v.dutyStatus === 'duty_free' ? 'Duty Free' : 'Duty Paid'}</span></p>` : ''}
       ${v.attachmentName ? `<p><button onclick="app.downloadVehicleAttachment(${v.id})" class="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800 hover:underline no-print">📎 ${this.escape(v.attachmentName)}</button></p>` : ''}
       ${v.notes ? `<div class="mt-1"><span class="font-medium text-slate-700">Notes:</span><div class="mt-1 space-y-0.5 text-gray-600">${v.notes.split('\n').map(line => line.trim() ? `<p class="leading-relaxed">${this.escape(line)}</p>` : '').join('')}</div></div>` : ''}
     `;
@@ -1299,6 +1472,7 @@ class FleetApp {
     document.getElementById('vehicleName').value = '';
     document.getElementById('vehicleReg').value = '';
     document.getElementById('vehicleYear').value = '';
+    document.getElementById('vehicleDutyStatus').value = '';
     document.getElementById('vehicleNotes').value = '';
     document.getElementById('initialValueRows').innerHTML = '';
     this.addInitialValueRow();
@@ -1314,6 +1488,7 @@ class FleetApp {
     document.getElementById('vehicleName').value = v.name || '';
     document.getElementById('vehicleReg').value = v.reg || '';
     document.getElementById('vehicleYear').value = v.year || '';
+    document.getElementById('vehicleDutyStatus').value = v.dutyStatus || '';
     document.getElementById('vehicleNotes').value = v.notes || '';
     document.getElementById('initialValueRows').innerHTML = '';
     
@@ -1380,6 +1555,7 @@ class FleetApp {
       name: document.getElementById('vehicleName').value.trim(),
       reg: document.getElementById('vehicleReg').value.trim(),
       year: parseInt(document.getElementById('vehicleYear').value) || null,
+      dutyStatus: document.getElementById('vehicleDutyStatus').value || '',
       initialValue: initialValueBreakdown.reduce((s, i) => s + (i.amount || 0), 0),
       initialValueBreakdown: initialValueBreakdown,
       notes: document.getElementById('vehicleNotes').value.trim()
