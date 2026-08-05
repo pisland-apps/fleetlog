@@ -1,4 +1,4 @@
-const CACHE_NAME = 'fleetlog-pwa-v1.3';
+const CACHE_NAME = 'fleetlog-pwa-v1.4';
 
 const STATIC_ASSETS = [
   './',

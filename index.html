@@ -221,10 +221,10 @@
           </table>
         </div>
 
-        <div class="flex gap-2 no-print flex-wrap mt-3 pt-3 border-t border-gray-100">
-          <button onclick="app.showBankLoanLedger()" class="px-2.5 py-1.5 text-blue-700 bg-blue-50 border border-blue-300 hover:bg-blue-100 rounded-lg text-xs transition font-medium">🏦 Bank Loan</button>
-          <button onclick="app.editVehicle()" class="px-2.5 py-1.5 text-amber-600 hover:bg-amber-50 border border-amber-200 rounded-lg text-xs transition">✏️ Edit Vehicle</button>
-          <button onclick="app.deleteVehicle()" class="px-2.5 py-1.5 text-red-600 hover:bg-red-50 border border-red-200 rounded-lg text-xs transition">🗑️ Delete Vehicle</button>
+        <div class="flex gap-2 no-print mt-3 pt-3 border-t border-gray-100">
+          <button onclick="app.showBankLoanLedger()" title="Bank Loan" class="flex-1 flex items-center justify-center px-2.5 py-1.5 text-blue-700 bg-blue-50 border border-blue-300 hover:bg-blue-100 rounded-lg text-base transition">🏦</button>
+          <button onclick="app.editVehicle()" title="Edit Vehicle" class="flex-1 flex items-center justify-center px-2.5 py-1.5 text-amber-600 hover:bg-amber-50 border border-amber-200 rounded-lg text-base transition">✏️</button>
+          <button onclick="app.deleteVehicle()" title="Delete Vehicle" class="flex-1 flex items-center justify-center px-2.5 py-1.5 text-red-600 hover:bg-red-50 border border-red-200 rounded-lg text-base transition">🗑️</button>
         </div>
       </div>
     </div>
@@ -1079,8 +1079,8 @@ class FleetApp {
 
     const customCategoryTotals = {};
     this.entries.forEach(e => {
-      if (e.type === 'other' || e.type === 'bank_loan') {
-        const catName = (e.categoryName && e.categoryName.trim()) ? e.categoryName.trim() : (e.type === 'bank_loan' ? 'Bank Loan' : 'Other');
+      if (e.type === 'other') {
+        const catName = (e.categoryName && e.categoryName.trim()) ? e.categoryName.trim() : 'Other';
         customCategoryTotals[catName] = (customCategoryTotals[catName] || 0) + (parseFloat(e.cost) || 0);
       }
     });
