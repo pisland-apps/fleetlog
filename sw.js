@@ -1,8 +1,10 @@
-const CACHE_NAME = 'fleetlog-pwa-v1.5';
+const CACHE_NAME = 'fleetlog-pwa-v1.6';
 
 const STATIC_ASSETS = [
   './',
   './index.html',
+  './app.js',
+  './styles.css',
   './manifest.json',
   './icons/favicon.ico',
   './icons/icon-72x72.png',
@@ -16,7 +18,7 @@ const STATIC_ASSETS = [
 ];
 
 const CDN_ASSETS = [
-  'https://cdn.tailwindcss.com',
+  'https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3',
   'https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap'
 ];
 
