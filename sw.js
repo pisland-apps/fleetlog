@@ -9,7 +9,7 @@
 // — bump both together by hand on every deploy. See the matching comment
 // above APP_VERSION near the top of app.js.
 // ---------------------------------------------------------------------
-const CACHE_NAME = 'fleetlog-pwa-v1.9.1';
+const CACHE_NAME = 'fleetlog-pwa-v1.9.2';
 
 const STATIC_ASSETS = [
   './',

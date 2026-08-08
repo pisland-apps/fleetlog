@@ -15,7 +15,7 @@ const DB_VERSION = 4;
 // and do NOT sync automatically — bump both together by hand on every
 // deploy. See the matching comment above CACHE_NAME in sw.js.
 // ---------------------------------------------------------------------
-const APP_VERSION = '1.9.1';
+const APP_VERSION = '1.9.2';
 const APP_VERSION_DATE = '2026-08-09';
 
 // Populate the badge as soon as this script runs — deliberately not inside
@@ -66,8 +66,8 @@ class CryptoEngine {
   }
 
   static async decrypt(encryptedPayload, key) {
-    const iv = new Uint8Array(encryptedPayload.iv);
-    const cipherText = new Uint8Array(encryptedPayload.cipherText);
+    const iv = CryptoEngine.toBytes(encryptedPayload.iv);
+    const cipherText = CryptoEngine.toBytes(encryptedPayload.cipherText);
     const decrypted = await crypto.subtle.decrypt(
       { name: "AES-GCM", iv },
       key,
@@ -75,6 +75,22 @@ class CryptoEngine {
     );
     const dec = new TextDecoder();
     return JSON.parse(dec.decode(decrypted));
+  }
+
+  // Accepts either the legacy plain number-array form (still used for
+  // records written straight to IndexedDB — see encrypt() above) or a
+  // base64-encoded string (used in exported backup files, see
+  // confirmExportData() — a multi-MB attachment as a JSON array of one
+  // number per byte, pretty-printed, can balloon past the JS engine's
+  // max string length; base64 keeps the export compact).
+  static toBytes(value) {
+    if (typeof value === 'string') {
+      const binary = atob(value);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      return bytes;
+    }
+    return new Uint8Array(value);
   }
 }
 
@@ -1526,9 +1542,22 @@ class FleetApp {
 
       let exportPayload;
       if (isEncrypted) {
+        // Re-encode each record's iv/cipherText as base64 instead of the
+        // raw plain number-array IndexedDB uses internally. With
+        // multi-MB attachments now possible, JSON.stringify's pretty-
+        // printer would otherwise put one line per byte and can exceed
+        // the JS engine's max string length — see CryptoEngine.toBytes,
+        // which transparently decodes either form on import.
         exportPayload = {
-          vehicles: vehiclesRaw,
-          entries: entriesRaw,
+          vehicles: vehiclesRaw.map(v => ({
+            id: v.id,
+            payload: { iv: this.bufToBase64(v.payload.iv), cipherText: this.bufToBase64(v.payload.cipherText) }
+          })),
+          entries: entriesRaw.map(e => ({
+            id: e.id,
+            vehicleId: e.vehicleId,
+            payload: { iv: this.bufToBase64(e.payload.iv), cipherText: this.bufToBase64(e.payload.cipherText) }
+          })),
           exportedAt: new Date().toISOString(),
           isEncrypted: true,
           salt: Array.from(this.salt),

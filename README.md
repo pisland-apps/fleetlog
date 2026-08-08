@@ -160,6 +160,9 @@ This mirrors the attachment viewer in the companion Wealth Planner app.
 
 ## 📝 Changelog
 
+### v1.9.2
+- 🐛 **Fixed**: "Export failed: Invalid string length" when exporting an encrypted backup with sizeable attachments. Encrypted export data is now base64-encoded instead of written out as a JSON array of one number per byte — the old format could inflate a single ~6 MB attachment's pretty-printed JSON to 60+ MB, which some browsers refuse to build as a single string. Import still reads older backup files exported before this fix.
+
 ### v1.9
 - ✅ **Multiple Attachments**: Vehicles and entries can now carry any number of image/PDF/doc attachments instead of just one — tap ➕ Add Attachment to add more, each with its own remove (✕) chip
 - 🐛 **Fixed**: Removing an attachment and saving now actually deletes it. Previously, clicking the ✕ next to an existing attachment reset the upload field but the save logic silently fell back to the old file, so the attachment was never actually removed or replaced.
