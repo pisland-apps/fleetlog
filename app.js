@@ -15,7 +15,7 @@ const DB_VERSION = 4;
 // and do NOT sync automatically — bump both together by hand on every
 // deploy. See the matching comment above CACHE_NAME in sw.js.
 // ---------------------------------------------------------------------
-const APP_VERSION = '1.9';
+const APP_VERSION = '1.9.1';
 const APP_VERSION_DATE = '2026-08-09';
 
 // Populate the badge as soon as this script runs — deliberately not inside
@@ -771,26 +771,28 @@ class FleetApp {
     const v = this.vehicles.find(x => x.id === this.currentVehicleId);
     const el = document.getElementById('vehicleDetailContent');
     const footer = document.getElementById('vehicleInfoFooter');
+    const attachmentsBar = document.getElementById('vehicleAttachmentsBar');
     if (!v) { 
       el.innerHTML = ''; 
       footer.classList.add('hidden');
+      attachmentsBar.innerHTML = '';
       return; 
     }
     footer.classList.remove('hidden');
     el.innerHTML = `
       <p><span class="font-medium text-slate-700">Year:</span> ${this.escape(v.year) || '—'}</p>
-      ${v.attachments && v.attachments.length ? `<div class="flex flex-wrap gap-x-3 gap-y-1 mt-1">
-        ${v.attachments.map((a, i) => `
-          <button data-click="openVehicleAttachment" data-click-args='[${v.id}, ${i}]' class="inline-flex items-center gap-1.5 text-blue-600 hover:text-blue-800 hover:underline no-print">
+      ${v.notes ? `<div class="mt-1"><span class="font-medium text-slate-700">Notes:</span><div class="mt-1 space-y-0.5 text-gray-600">${v.notes.split('\n').map(line => line.trim() ? `<p class="leading-relaxed">${this.escape(line)}</p>` : '').join('')}</div></div>` : ''}
+    `;
+    attachmentsBar.innerHTML = (v.attachments && v.attachments.length)
+      ? v.attachments.map((a, i) => `
+          <button data-click="openVehicleAttachment" data-click-args='[${v.id}, ${i}]' class="inline-flex items-center gap-1.5 text-[11px] text-blue-600 hover:text-blue-800 hover:underline">
             ${a.type && a.type.startsWith('image/') && a.data
               ? `<img src="${this.getThumbUrl(this.vehicleThumbUrls, v.id + ':' + i, a.data)}" class="w-6 h-6 object-cover rounded border border-gray-300 flex-shrink-0" alt="">`
               : '📎'}
-            <span>${this.escape(a.name)}</span>
+            <span class="truncate max-w-[160px]">${this.escape(a.name)}</span>
           </button>
-        `).join('')}
-      </div>` : ''}
-      ${v.notes ? `<div class="mt-1"><span class="font-medium text-slate-700">Notes:</span><div class="mt-1 space-y-0.5 text-gray-600">${v.notes.split('\n').map(line => line.trim() ? `<p class="leading-relaxed">${this.escape(line)}</p>` : '').join('')}</div></div>` : ''}
-    `;
+        `).join('')
+      : '';
   }
 
   renderPrintSections() {
@@ -852,6 +854,7 @@ class FleetApp {
     document.getElementById('entriesTable').innerHTML = '';
     document.getElementById('emptyState').classList.remove('hidden');
     document.getElementById('vehicleInfoFooter').classList.add('hidden');
+    document.getElementById('vehicleAttachmentsBar').innerHTML = '';
   }
 
   addInitialValueRow(date = '', label = '', amount = '') {
