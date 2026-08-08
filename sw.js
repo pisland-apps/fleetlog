@@ -1,9 +1,21 @@
-const CACHE_NAME = 'fleetlog-pwa-v1.7';
+// ---------------------------------------------------------------------
+// CACHE_NAME — cache-busting version for this service worker's asset
+// cache. Bump it on every deploy that changes any cached file, so old
+// clients pick up the new files instead of serving stale ones from cache.
+//
+// This is INDEPENDENT of APP_VERSION / APP_VERSION_DATE in app.js (the
+// small version badge shown in the corner of the app, even on the lock
+// screen). The two live in different files and do NOT sync automatically
+// — bump both together by hand on every deploy. See the matching comment
+// above APP_VERSION near the top of app.js.
+// ---------------------------------------------------------------------
+const CACHE_NAME = 'fleetlog-pwa-v1.8';
 
 const STATIC_ASSETS = [
   './',
   './index.html',
   './app.js',
+  './pdf-worker-init.js',
   './styles.css',
   './manifest.json',
   './icons/favicon.ico',
@@ -19,7 +31,9 @@ const STATIC_ASSETS = [
 
 const CDN_ASSETS = [
   'https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3/dist/index.global.js',
-  'https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap'
+  'https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap',
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
 ];
 
 // Allow the page to force an already-installed, waiting service worker to

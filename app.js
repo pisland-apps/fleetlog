@@ -1,6 +1,35 @@
 const DB_NAME = 'FleetLogDB';
 const DB_VERSION = 4;
 
+// ---------------------------------------------------------------------
+// APP_VERSION / APP_VERSION_DATE — the human-readable label shown in the
+// small corner badge (#versionBadge in index.html), including on the
+// lock screen before authentication. This only tells you what code
+// shipped in this build, not what the browser is actually running — if
+// you deploy and the badge doesn't change, hard-refresh (Ctrl/Cmd+Shift+R)
+// or clear the site's Service Worker/cache in devtools rather than
+// assuming the deploy failed.
+//
+// This is INDEPENDENT of CACHE_NAME in sw.js (the cache-busting version
+// for the service worker's asset cache). The two live in different files
+// and do NOT sync automatically — bump both together by hand on every
+// deploy. See the matching comment above CACHE_NAME in sw.js.
+// ---------------------------------------------------------------------
+const APP_VERSION = '1.8';
+const APP_VERSION_DATE = '2026-08-08';
+
+// Populate the badge as soon as this script runs — deliberately not inside
+// the DOMContentLoaded handler further down, so it appears immediately and
+// doesn't wait on FleetApp initializing or the user unlocking the app.
+// app.js loads with `defer`, so the DOM is already parsed by this point.
+(() => {
+  const badge = document.getElementById('versionBadge');
+  if (badge) {
+    badge.textContent = 'v' + APP_VERSION;
+    badge.title = 'FleetLog v' + APP_VERSION + ' — ' + APP_VERSION_DATE;
+  }
+})();
+
 class CryptoEngine {
   static async deriveKey(passcode, salt) {
     const enc = new TextEncoder();
@@ -61,6 +90,16 @@ class FleetApp {
     this.tempAttachment = null;
     this.tempVehicleAttachment = null;
     this.currencySymbol = 'RM';
+
+    // Object URLs for the small inline image thumbnails shown next to
+    // maintenance entries / vehicle details when their attachment is an
+    // image ("logo"). Keyed by entry/vehicle id, revoked and rebuilt
+    // whenever entries/vehicles are reloaded — see revokeThumbCache().
+    this.entryThumbUrls = new Map();
+    this.vehicleThumbUrls = new Map();
+    // Object URLs created for whichever attachment is currently open in
+    // the in-app viewer — revoked on close/replace, see closeAttachmentViewer().
+    this.avObjectUrls = [];
     
     this.cryptoKey = null;
     this.salt = null;
@@ -354,6 +393,10 @@ class FleetApp {
         try {
           const rawVehicles = req.result;
           this.vehicles = [];
+          // Attachments are re-decrypted into fresh Blob objects on every
+          // load, so any thumbnail object URLs from the previous set are
+          // now pointing at orphaned Blobs — revoke them before rebuilding.
+          this.revokeThumbCache(this.vehicleThumbUrls);
           for (const raw of rawVehicles) {
             if (raw.payload) {
               const decrypted = await CryptoEngine.decrypt(raw.payload, this.cryptoKey);
@@ -384,6 +427,9 @@ class FleetApp {
         try {
           const rawEntries = req.result;
           this.entries = [];
+          // Same reasoning as in loadVehicles(): fresh Blobs every load,
+          // so the previous batch of thumbnail object URLs is now stale.
+          this.revokeThumbCache(this.entryThumbUrls);
           for (const raw of rawEntries) {
             if (raw.payload) {
               const decrypted = await CryptoEngine.decrypt(raw.payload, this.cryptoKey);
@@ -703,8 +749,11 @@ class FleetApp {
         </tr>${e.attachmentName ? `
         <tr class="bg-slate-50/70">
           <td colspan="6" class="px-3 pb-2 pt-0">
-            <button data-click="downloadAttachment" data-click-args='[${e.id}]' class="ml-0 sm:ml-[19%] inline-flex items-center gap-1 text-[11px] text-blue-600 hover:text-blue-800 hover:underline">
-              📎 <span class="truncate max-w-[260px]">${this.escape(e.attachmentName)}</span>
+            <button data-click="openEntryAttachment" data-click-args='[${e.id}]' class="ml-0 sm:ml-[19%] inline-flex items-center gap-1.5 text-[11px] text-blue-600 hover:text-blue-800 hover:underline">
+              ${e.attachmentType && e.attachmentType.startsWith('image/') && e.attachment
+                ? `<img src="${this.getThumbUrl(this.entryThumbUrls, e.id, e.attachment)}" class="w-6 h-6 object-cover rounded border border-gray-300 flex-shrink-0" alt="">`
+                : '📎'}
+              <span class="truncate max-w-[260px]">${this.escape(e.attachmentName)}</span>
             </button>
           </td>
         </tr>` : ''}
@@ -724,7 +773,12 @@ class FleetApp {
     footer.classList.remove('hidden');
     el.innerHTML = `
       <p><span class="font-medium text-slate-700">Year:</span> ${this.escape(v.year) || '—'}</p>
-      ${v.attachmentName ? `<p><button data-click="downloadVehicleAttachment" data-click-args='[${v.id}]' class="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800 hover:underline no-print">📎 ${this.escape(v.attachmentName)}</button></p>` : ''}
+      ${v.attachmentName ? `<p><button data-click="openVehicleAttachment" data-click-args='[${v.id}]' class="inline-flex items-center gap-1.5 text-blue-600 hover:text-blue-800 hover:underline no-print">
+        ${v.attachmentType && v.attachmentType.startsWith('image/') && v.attachment
+          ? `<img src="${this.getThumbUrl(this.vehicleThumbUrls, v.id, v.attachment)}" class="w-6 h-6 object-cover rounded border border-gray-300 flex-shrink-0" alt="">`
+          : '📎'}
+        <span>${this.escape(v.attachmentName)}</span>
+      </button></p>` : ''}
       ${v.notes ? `<div class="mt-1"><span class="font-medium text-slate-700">Notes:</span><div class="mt-1 space-y-0.5 text-gray-600">${v.notes.split('\n').map(line => line.trim() ? `<p class="leading-relaxed">${this.escape(line)}</p>` : '').join('')}</div></div>` : ''}
     `;
   }
@@ -993,21 +1047,99 @@ class FleetApp {
     document.getElementById('vehicleAttachmentName').classList.add('hidden');
   }
 
-  async downloadVehicleAttachment(vehicleId) {
+  // ==================== ATTACHMENT VIEWER (image/PDF) ====================
+  // In-app viewer for vehicle cards/duty certs and maintenance-entry
+  // attachments. Deliberately does NOT navigate to the Blob URL or embed
+  // it in an iframe: navigating a link straight to a blob: URL makes most
+  // browsers treat it as a download rather than something to view, and
+  // iframes showing a PDF can render blank or get blocked outright
+  // depending on the browser's own PDF-handling setting. Images are
+  // shown via a Blob object URL; PDFs are decoded and rendered
+  // page-by-page onto <canvas> via pdf.js. "Save a Copy" stays a
+  // separate, explicit action for when a real download is wanted.
+
+  getThumbUrl(map, id, blob) {
+    const cached = map.get(id);
+    if (cached && cached.blob === blob) return cached.url;
+    if (cached) URL.revokeObjectURL(cached.url);
+    const url = URL.createObjectURL(blob);
+    map.set(id, { blob, url });
+    return url;
+  }
+
+  revokeThumbCache(map) {
+    map.forEach(entry => URL.revokeObjectURL(entry.url));
+    map.clear();
+  }
+
+  openEntryAttachment(entryId) {
+    const entry = this.entries.find(e => e.id === entryId);
+    if (!entry || !entry.attachment) { this.toast('No attachment found', 'error'); return; }
+    this.openAttachmentViewer(entry.attachment, entry.attachmentName, entry.attachmentType);
+  }
+
+  openVehicleAttachment(vehicleId) {
+    const vehicle = this.vehicles.find(v => v.id === vehicleId);
+    if (!vehicle || !vehicle.attachment) { this.toast('No attachment found', 'error'); return; }
+    this.openAttachmentViewer(vehicle.attachment, vehicle.attachmentName, vehicle.attachmentType);
+  }
+
+  async openAttachmentViewer(blob, name, type) {
+    this.avObjectUrls.forEach(u => URL.revokeObjectURL(u));
+    this.avObjectUrls = [];
+
+    document.getElementById('avTitle').textContent = name || 'Attachment';
+    const content = document.getElementById('avContent');
+    content.innerHTML = '<div class="py-16 text-gray-400 text-sm">Loading…</div>';
+    this.openModal('attachmentViewerModal');
+
+    const fileUrl = URL.createObjectURL(blob);
+    this.avObjectUrls.push(fileUrl);
+    const saveBtn = document.getElementById('avSaveCopyBtn');
+    saveBtn.href = fileUrl;
+    saveBtn.setAttribute('download', name || 'attachment');
+
+    const isImage = type && type.startsWith('image/');
+    const isPdf = type === 'application/pdf' || /\.pdf$/i.test(name || '');
+
     try {
-      const vehicle = this.vehicles.find(v => v.id === vehicleId);
-      if (!vehicle || !vehicle.attachment) { this.toast('No attachment found', 'error'); return; }
-      const url = URL.createObjectURL(vehicle.attachment);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = vehicle.attachmentName || 'attachment';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      if (isImage) {
+        content.innerHTML = '';
+        const img = document.createElement('img');
+        img.src = fileUrl;
+        img.className = 'max-w-full mx-auto rounded-lg';
+        content.appendChild(img);
+      } else if (isPdf) {
+        if (!window.pdfjsLib) throw new Error('PDF viewer failed to load');
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
+        content.innerHTML = '';
+        const containerWidth = content.clientWidth || 700;
+        for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+          const page = await pdf.getPage(pageNum);
+          const unscaledViewport = page.getViewport({ scale: 1 });
+          const scale = Math.max(0.1, (containerWidth - 20) / unscaledViewport.width);
+          const viewport = page.getViewport({ scale });
+          const canvas = document.createElement('canvas');
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          canvas.className = 'mx-auto mb-3 shadow rounded bg-white block';
+          content.appendChild(canvas);
+          await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+        }
+      } else {
+        content.innerHTML = '<div class="py-16 text-gray-400 text-sm">Preview not available for this file type — use "Save a Copy" to download it.</div>';
+      }
     } catch (err) {
-      this.toast('Download failed: ' + err.message, 'error');
+      content.innerHTML = '<div class="py-16 text-red-500 text-sm px-4">Could not preview this file: ' + this.escape(err.message) + '</div>';
     }
+  }
+
+  closeAttachmentViewer() {
+    this.avObjectUrls.forEach(u => URL.revokeObjectURL(u));
+    this.avObjectUrls = [];
+    const content = document.getElementById('avContent');
+    if (content) content.innerHTML = '';
   }
 
   async saveVehicle() {
@@ -1265,23 +1397,6 @@ class FleetApp {
     document.getElementById('attachmentName').classList.add('hidden');
   }
 
-  async downloadAttachment(entryId) {
-    try {
-      const entry = this.entries.find(e => e.id === entryId);
-      if (!entry || !entry.attachment) { this.toast('No attachment found', 'error'); return; }
-      const url = URL.createObjectURL(entry.attachment);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = entry.attachmentName || 'attachment';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      this.toast('Download failed: ' + err.message, 'error');
-    }
-  }
-
   blobToBase64(blob) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -1531,6 +1646,7 @@ class FleetApp {
     el.classList.remove('flex');
     if (id === 'vehicleModal') this.tempVehicleAttachment = null;
     if (id === 'entryModal') this.tempAttachment = null;
+    if (id === 'attachmentViewerModal') this.closeAttachmentViewer();
   }
 
   fmt(n, d = 2) {
@@ -1583,6 +1699,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('entryModal').addEventListener('click', e => { if (e.target === e.currentTarget) app.closeModal('entryModal'); });
   document.getElementById('bankLoanModal').addEventListener('click', e => { if (e.target === e.currentTarget) app.closeModal('bankLoanModal'); });
   document.getElementById('confirmModal').addEventListener('click', e => { if (e.target === e.currentTarget) app.closeModal('confirmModal'); });
+  document.getElementById('attachmentViewerModal').addEventListener('click', e => { if (e.target === e.currentTarget) app.closeModal('attachmentViewerModal'); });
 
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
@@ -1591,6 +1708,7 @@ document.addEventListener('DOMContentLoaded', () => {
       app.closeModal('entryModal');
       app.closeModal('bankLoanModal');
       app.closeModal('confirmModal');
+      app.closeModal('attachmentViewerModal');
     }
   });
 });

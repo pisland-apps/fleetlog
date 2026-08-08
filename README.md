@@ -109,14 +109,54 @@ AES-256-GCM Key ──► Encrypt/Decrypt all IndexedDB records
 | Dynamic data | **Network Only** | All data lives in local IndexedDB |
 
 ### Updating the App
-When you push a new version:
-1. Bump `CACHE_NAME` in `sw.js` (e.g., `fleetlog-pwa-v1.2`).
-2. The new Service Worker will install and activate, clearing old caches.
-3. Users will get the latest app shell on the next visit.
+When you push a new version, bump **both** of these together — they live in
+different files and do not sync automatically:
+1. `CACHE_NAME` in `sw.js` (e.g., `fleetlog-pwa-v1.9`) — this busts the
+   service worker's asset cache so old clients pick up the new files.
+2. `APP_VERSION` / `APP_VERSION_DATE` near the top of `app.js` — this is the
+   human-readable label shown in the small badge in the corner of the app,
+   visible even on the lock screen before authentication. It's a display
+   label only and has no effect on caching.
+
+Each file has a comment pointing at the other as a reminder. The badge only
+tells you what code shipped in this build, not what the browser is actually
+running — if you deploy and the number in the corner doesn't match what you
+expect, that's the signal to hard-refresh (Ctrl/Cmd+Shift+R) or clear the
+site's Service Worker/cache in devtools, not to assume the deploy failed.
+
+3. The new Service Worker will install and activate, clearing old caches.
+4. Users will get the latest app shell on the next visit.
+
+---
+
+## 📎 Attachments & In-App Viewer
+
+Vehicles and maintenance/depreciation/other entries can each carry one file
+attachment (image, PDF, or Word doc — 5 MB cap, enforced on upload):
+- **Vehicle Details** — for registration cards, duty-exemption certs, etc.
+- **Maintenance Log entries** — for receipts, invoices, workshop reports.
+
+Clicking an attachment opens it in an in-app viewer instead of the browser:
+- **Images** render directly, and also show as a small thumbnail "logo"
+  next to the entry/vehicle wherever they're referenced — if there's no
+  attachment, or it isn't an image, no thumbnail is shown.
+- **PDFs** are rendered page-by-page onto `<canvas>` via pdf.js, avoiding
+  the inconsistent (and sometimes blocked) way browsers handle PDFs in
+  `<iframe>`s or navigated-to blob/data URLs.
+- Other file types (e.g. `.doc`/`.docx`) show a "no preview available"
+  message with a **Save a Copy** button, which is also available for
+  images/PDFs if you want the actual file rather than just viewing it.
+
+This mirrors the attachment viewer in the companion Wealth Planner app.
 
 ---
 
 ## 📝 Changelog
+
+### v1.8
+- ✅ **In-App Attachment Viewer**: Images and PDFs on vehicles/entries now open in an in-app viewer (pdf.js for PDFs, Blob object URLs for images) instead of downloading straight to disk
+- ✅ **Attachment Thumbnails**: Maintenance entries and Vehicle Details show a small image thumbnail when the attachment is an image; blank when there's no attachment
+- ✅ **Version Badge**: Small corner badge showing `APP_VERSION` from `app.js`, visible even on the lock screen before authentication
 
 ### v1.1
 - ✅ **Service Worker**: Stale-While-Revalidate strategy with v1.1 cache

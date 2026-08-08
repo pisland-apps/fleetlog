@@ -2,7 +2,16 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self'; manifest-src 'self'; worker-src 'self'; connect-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'">
+<!--
+  Content-Security-Policy notes for the img/pdf attachment viewer:
+  - script-src / worker-src gained cdnjs.cloudflare.com so pdf.js and its
+    worker script (used to render PDF attachments to <canvas>, in-app,
+    without relying on the browser's own PDF plugin) can load.
+  - img-src gained blob: because attachment images/thumbnails are shown
+    via object URLs created from the Blob stored in IndexedDB, not by
+    pointing straight at a data: URL.
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' blob:; manifest-src 'self'; worker-src 'self' https://cdnjs.cloudflare.com; connect-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'">
 <meta name="theme-color" content="#1e293b">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -13,6 +22,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>FleetLog — Vehicle Maintenance & Depreciation Tracker</title>
 <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3/dist/index.global.js" integrity="sha384-2ql948lIdLcGEE0/qxNiudyTjgauA3RDJERu5xW75kFCvSl5a9odyQYCb6tEjnmB" crossorigin="anonymous"></script>
+<!--
+  pdf.js — renders PDF attachments to <canvas> inside the in-app viewer.
+  No integrity/SRI hash here yet, unlike the tailwind script above. To add
+  one: download this exact file, then run
+  `openssl dgst -sha384 -binary pdf.min.js | openssl base64 -A`
+  and paste the result into an integrity="sha384-..." attribute.
+-->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" crossorigin="anonymous"></script>
+<script src="pdf-worker-init.js"></script>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body class="bg-gray-50 min-h-screen">
@@ -27,6 +45,16 @@
   <option value="Road Tax"></option>
   <option value="Fuel"></option>
 </datalist>
+
+<!--
+  Version badge — always visible, including on the lock screen before
+  authentication (that's the point: it tells you what build actually
+  shipped, before you've even typed a passcode). z-[250] sits above the
+  lock screen's z-[200]. Text is populated from APP_VERSION in app.js —
+  see the comment there. This label is display-only; it is independent
+  of CACHE_NAME in sw.js and does not affect caching in any way.
+-->
+<div id="versionBadge" title="" class="fixed bottom-2 right-2 z-[250] select-none text-[10px] font-mono text-slate-300 bg-slate-900/70 px-1.5 py-0.5 rounded pointer-events-auto no-print"></div>
 
 <!-- App Lock Screen Overlay -->
 <div id="lockScreen" class="fixed inset-0 bg-slate-900 z-[200] flex items-center justify-center p-4">
@@ -356,6 +384,31 @@
     <div class="px-6 py-4 border-t border-gray-200 bg-gray-50 flex justify-end gap-2 flex-shrink-0">
       <button data-click="closeModal" data-click-args='["entryModal"]' class="px-4 py-2 text-gray-600 hover:text-gray-800 transition rounded-lg hover:bg-gray-100">Cancel</button>
       <button data-click="saveEntry" class="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-900 font-semibold rounded-lg transition">Save Entry</button>
+    </div>
+  </div>
+</div>
+
+<!--
+  Attachment Viewer Modal — in-app viewer for image/PDF attachments on
+  vehicles and maintenance entries. Deliberately does not just link to
+  the file: navigating straight to a Blob/data URL makes most browsers
+  treat it as a download rather than something to view, and PDFs in an
+  <iframe> render blank in some browsers regardless of the browser's own
+  PDF-handling setting. Images are shown via a Blob object URL; PDFs are
+  decoded and rendered page-by-page onto <canvas> via pdf.js. "Save a
+  Copy" is kept as a separate, explicit action for when a real download
+  is what's wanted.
+-->
+<div id="attachmentViewerModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50 backdrop-blur-sm no-print">
+  <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 max-h-[90vh] flex flex-col modal-enter">
+    <div class="px-6 py-4 border-b border-gray-200 bg-slate-50 flex items-center justify-between flex-shrink-0">
+      <h3 id="avTitle" class="text-lg font-semibold text-slate-800 truncate pr-4">Attachment</h3>
+      <button data-click="closeModal" data-click-args='["attachmentViewerModal"]' class="text-gray-400 hover:text-gray-600 text-xl leading-none flex-shrink-0">&times;</button>
+    </div>
+    <div id="avContent" class="p-4 overflow-y-auto flex-1 min-h-0 bg-slate-100 text-center"></div>
+    <div class="px-6 py-4 border-t border-gray-200 bg-gray-50 flex justify-end gap-2 flex-shrink-0">
+      <a id="avSaveCopyBtn" href="#" download class="px-4 py-2 text-gray-600 hover:text-gray-800 transition rounded-lg hover:bg-gray-100 text-sm font-medium">💾 Save a Copy</a>
+      <button data-click="closeModal" data-click-args='["attachmentViewerModal"]' class="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-900 font-semibold rounded-lg transition">Close</button>
     </div>
   </div>
 </div>
