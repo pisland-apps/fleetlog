@@ -15,8 +15,8 @@ const DB_VERSION = 4;
 // and do NOT sync automatically — bump both together by hand on every
 // deploy. See the matching comment above CACHE_NAME in sw.js.
 // ---------------------------------------------------------------------
-const APP_VERSION = '1.8';
-const APP_VERSION_DATE = '2026-08-08';
+const APP_VERSION = '1.9';
+const APP_VERSION_DATE = '2026-08-09';
 
 // Populate the badge as soon as this script runs — deliberately not inside
 // the DOMContentLoaded handler further down, so it appears immediately and
@@ -87,14 +87,20 @@ class FleetApp {
     this.sortField = 'date';
     this.sortAsc = false;
     this.pendingDelete = null;
-    this.tempAttachment = null;
-    this.tempVehicleAttachment = null;
+    // Working list of attachments for whichever modal (entry/vehicle) is
+    // currently open — [{name, type, data}] where data is a Blob/File.
+    // This array IS the desired end state on save (see saveEntry/
+    // saveVehicle), so removing an item here and saving actually drops
+    // it — there's no separate "existing attachment" fallback to fight.
+    this.entryAttachments = [];
+    this.vehicleAttachments = [];
     this.currencySymbol = 'RM';
 
     // Object URLs for the small inline image thumbnails shown next to
-    // maintenance entries / vehicle details when their attachment is an
-    // image ("logo"). Keyed by entry/vehicle id, revoked and rebuilt
-    // whenever entries/vehicles are reloaded — see revokeThumbCache().
+    // maintenance entries / vehicle details for each image attachment.
+    // Keyed by "<entryId>:<attachmentIndex>" (or "<vehicleId>:<index>"),
+    // revoked and rebuilt whenever entries/vehicles are reloaded — see
+    // revokeThumbCache().
     this.entryThumbUrls = new Map();
     this.vehicleThumbUrls = new Map();
     // Object URLs created for whichever attachment is currently open in
@@ -400,9 +406,7 @@ class FleetApp {
           for (const raw of rawVehicles) {
             if (raw.payload) {
               const decrypted = await CryptoEngine.decrypt(raw.payload, this.cryptoKey);
-              if (decrypted.attachment && typeof decrypted.attachment === 'string') {
-                decrypted.attachment = this.base64ToBlob(decrypted.attachment, decrypted.attachmentType);
-              }
+              this.migrateAttachments(decrypted);
               this.vehicles.push({ id: raw.id, ...decrypted });
             } else {
               this.vehicles.push(raw);
@@ -433,9 +437,7 @@ class FleetApp {
           for (const raw of rawEntries) {
             if (raw.payload) {
               const decrypted = await CryptoEngine.decrypt(raw.payload, this.cryptoKey);
-              if (decrypted.attachment && typeof decrypted.attachment === 'string') {
-                decrypted.attachment = this.base64ToBlob(decrypted.attachment, decrypted.attachmentType);
-              }
+              this.migrateAttachments(decrypted);
               this.entries.push({ id: raw.id, vehicleId: raw.vehicleId, ...decrypted });
             } else {
               this.entries.push(raw);
@@ -746,15 +748,19 @@ class FleetApp {
               <button data-click="confirmDeleteEntry" data-click-args='[${e.id}]' class="p-1 text-red-600 hover:bg-red-50 rounded transition" title="Delete">🗑️</button>
             </div>
           </td>
-        </tr>${e.attachmentName ? `
+        </tr>${e.attachments && e.attachments.length ? `
         <tr class="bg-slate-50/70">
           <td colspan="6" class="px-3 pb-2 pt-0">
-            <button data-click="openEntryAttachment" data-click-args='[${e.id}]' class="ml-0 sm:ml-[19%] inline-flex items-center gap-1.5 text-[11px] text-blue-600 hover:text-blue-800 hover:underline">
-              ${e.attachmentType && e.attachmentType.startsWith('image/') && e.attachment
-                ? `<img src="${this.getThumbUrl(this.entryThumbUrls, e.id, e.attachment)}" class="w-6 h-6 object-cover rounded border border-gray-300 flex-shrink-0" alt="">`
-                : '📎'}
-              <span class="truncate max-w-[260px]">${this.escape(e.attachmentName)}</span>
-            </button>
+            <div class="ml-0 sm:ml-[19%] flex flex-wrap gap-x-3 gap-y-1">
+              ${e.attachments.map((a, i) => `
+                <button data-click="openEntryAttachment" data-click-args='[${e.id}, ${i}]' class="inline-flex items-center gap-1.5 text-[11px] text-blue-600 hover:text-blue-800 hover:underline">
+                  ${a.type && a.type.startsWith('image/') && a.data
+                    ? `<img src="${this.getThumbUrl(this.entryThumbUrls, e.id + ':' + i, a.data)}" class="w-6 h-6 object-cover rounded border border-gray-300 flex-shrink-0" alt="">`
+                    : '📎'}
+                  <span class="truncate max-w-[260px]">${this.escape(a.name)}</span>
+                </button>
+              `).join('')}
+            </div>
           </td>
         </tr>` : ''}
       `;
@@ -773,12 +779,16 @@ class FleetApp {
     footer.classList.remove('hidden');
     el.innerHTML = `
       <p><span class="font-medium text-slate-700">Year:</span> ${this.escape(v.year) || '—'}</p>
-      ${v.attachmentName ? `<p><button data-click="openVehicleAttachment" data-click-args='[${v.id}]' class="inline-flex items-center gap-1.5 text-blue-600 hover:text-blue-800 hover:underline no-print">
-        ${v.attachmentType && v.attachmentType.startsWith('image/') && v.attachment
-          ? `<img src="${this.getThumbUrl(this.vehicleThumbUrls, v.id, v.attachment)}" class="w-6 h-6 object-cover rounded border border-gray-300 flex-shrink-0" alt="">`
-          : '📎'}
-        <span>${this.escape(v.attachmentName)}</span>
-      </button></p>` : ''}
+      ${v.attachments && v.attachments.length ? `<div class="flex flex-wrap gap-x-3 gap-y-1 mt-1">
+        ${v.attachments.map((a, i) => `
+          <button data-click="openVehicleAttachment" data-click-args='[${v.id}, ${i}]' class="inline-flex items-center gap-1.5 text-blue-600 hover:text-blue-800 hover:underline no-print">
+            ${a.type && a.type.startsWith('image/') && a.data
+              ? `<img src="${this.getThumbUrl(this.vehicleThumbUrls, v.id + ':' + i, a.data)}" class="w-6 h-6 object-cover rounded border border-gray-300 flex-shrink-0" alt="">`
+              : '📎'}
+            <span>${this.escape(a.name)}</span>
+          </button>
+        `).join('')}
+      </div>` : ''}
       ${v.notes ? `<div class="mt-1"><span class="font-medium text-slate-700">Notes:</span><div class="mt-1 space-y-0.5 text-gray-600">${v.notes.split('\n').map(line => line.trim() ? `<p class="leading-relaxed">${this.escape(line)}</p>` : '').join('')}</div></div>` : ''}
     `;
   }
@@ -983,7 +993,8 @@ class FleetApp {
   }
 
   showAddVehicle() {
-    this.clearVehicleAttachment();
+    this.vehicleAttachments = [];
+    this.renderAttachmentChips('vehicle');
     document.getElementById('vehicleId').value = '';
     document.getElementById('vehicleName').value = '';
     document.getElementById('vehicleReg').value = '';
@@ -999,7 +1010,10 @@ class FleetApp {
   editVehicle() {
     const v = this.vehicles.find(x => x.id === this.currentVehicleId);
     if (!v) return;
-    this.clearVehicleAttachment();
+    // Work from a shallow copy so removing/adding items while the modal
+    // is open doesn't mutate the loaded vehicle record until Save.
+    this.vehicleAttachments = (v.attachments || []).map(a => ({ ...a }));
+    this.renderAttachmentChips('vehicle');
     document.getElementById('vehicleId').value = v.id;
     document.getElementById('vehicleName').value = v.name || '';
     document.getElementById('vehicleReg').value = v.reg || '';
@@ -1014,37 +1028,60 @@ class FleetApp {
       this.addInitialValueRow('', 'Initial Value', v.initialValue || '');
     }
 
-    if (v.attachmentName) {
-      document.getElementById('vehicleAttachmentLabel').textContent = '📎 ' + v.attachmentName;
-      document.getElementById('vehicleAttachmentLabel').classList.add('text-amber-700', 'bg-amber-50', 'border-amber-300');
-      document.getElementById('clearVehicleAttachmentBtn').classList.remove('hidden');
-      document.getElementById('vehicleAttachmentName').textContent = 'Existing: ' + v.attachmentName + ' (upload new to replace)';
-      document.getElementById('vehicleAttachmentName').classList.remove('hidden');
-    }
     document.getElementById('vehicleModalTitle').textContent = 'Edit Vehicle';
     this.openModal('vehicleModal');
   }
 
   onVehicleFileSelected(input) {
-    if (input.files.length > 0) {
-      const file = input.files[0];
-      if (!this.checkFileSize(file)) { input.value = ''; return; }
-      this.tempVehicleAttachment = { blob: file, name: file.name, type: file.type };
-      document.getElementById('vehicleAttachmentLabel').textContent = '📎 ' + file.name;
-      document.getElementById('vehicleAttachmentLabel').classList.add('text-amber-700', 'bg-amber-50', 'border-amber-300');
-      document.getElementById('clearVehicleAttachmentBtn').classList.remove('hidden');
-      document.getElementById('vehicleAttachmentName').textContent = 'Ready to upload: ' + file.name;
-      document.getElementById('vehicleAttachmentName').classList.remove('hidden');
-    }
+    this.addFilesToAttachments('vehicle', input.files);
+    input.value = '';
   }
 
-  clearVehicleAttachment() {
-    this.tempVehicleAttachment = null;
-    document.getElementById('vehicleAttachment').value = '';
-    document.getElementById('vehicleAttachmentLabel').textContent = '📎 Click to upload file';
-    document.getElementById('vehicleAttachmentLabel').classList.remove('text-amber-700', 'bg-amber-50', 'border-amber-300');
-    document.getElementById('clearVehicleAttachmentBtn').classList.add('hidden');
-    document.getElementById('vehicleAttachmentName').classList.add('hidden');
+  // ==================== MULTI-ATTACHMENT EDITOR (shared) ====================
+  // Both the vehicle and entry modals let the user attach any number of
+  // images/PDFs. `scope` is 'entry' or 'vehicle' and selects which
+  // working array (this.entryAttachments / this.vehicleAttachments) and
+  // which DOM list container (#attachmentList / #vehicleAttachmentList)
+  // to act on. The working array is rebuilt from the record's saved
+  // attachments when the modal opens (see editEntry/editVehicle) and is
+  // exactly what gets written out on Save — so removing a chip here and
+  // saving actually deletes that attachment, and adding files here
+  // (repeatedly, if desired) appends more without touching the rest.
+
+  triggerFileInput(inputId) {
+    document.getElementById(inputId).click();
+  }
+
+  addFilesToAttachments(scope, fileList) {
+    const arr = scope === 'entry' ? this.entryAttachments : this.vehicleAttachments;
+    for (const file of fileList) {
+      if (!this.checkFileSize(file)) continue;
+      arr.push({ name: file.name, type: file.type, data: file });
+    }
+    this.renderAttachmentChips(scope);
+  }
+
+  removeAttachment(scope, index) {
+    const arr = scope === 'entry' ? this.entryAttachments : this.vehicleAttachments;
+    arr.splice(index, 1);
+    this.renderAttachmentChips(scope);
+  }
+
+  renderAttachmentChips(scope) {
+    const arr = scope === 'entry' ? this.entryAttachments : this.vehicleAttachments;
+    const containerId = scope === 'entry' ? 'attachmentList' : 'vehicleAttachmentList';
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    if (!arr.length) {
+      container.innerHTML = '';
+      return;
+    }
+    container.innerHTML = arr.map((a, i) => `
+      <div class="flex items-center gap-2 px-3 py-1.5 border border-gray-200 rounded-lg bg-amber-50/60 text-sm">
+        <span class="flex-1 truncate text-gray-700">📎 ${this.escape(a.name)}</span>
+        <button type="button" data-click="removeAttachment" data-click-args='["${scope}", ${i}]' class="text-red-500 hover:bg-red-100 rounded px-1.5 leading-none transition" title="Remove">✕</button>
+      </div>
+    `).join('');
   }
 
   // ==================== ATTACHMENT VIEWER (image/PDF) ====================
@@ -1072,16 +1109,18 @@ class FleetApp {
     map.clear();
   }
 
-  openEntryAttachment(entryId) {
+  openEntryAttachment(entryId, index) {
     const entry = this.entries.find(e => e.id === entryId);
-    if (!entry || !entry.attachment) { this.toast('No attachment found', 'error'); return; }
-    this.openAttachmentViewer(entry.attachment, entry.attachmentName, entry.attachmentType);
+    const a = entry && entry.attachments && entry.attachments[index];
+    if (!a || !a.data) { this.toast('No attachment found', 'error'); return; }
+    this.openAttachmentViewer(a.data, a.name, a.type);
   }
 
-  openVehicleAttachment(vehicleId) {
+  openVehicleAttachment(vehicleId, index) {
     const vehicle = this.vehicles.find(v => v.id === vehicleId);
-    if (!vehicle || !vehicle.attachment) { this.toast('No attachment found', 'error'); return; }
-    this.openAttachmentViewer(vehicle.attachment, vehicle.attachmentName, vehicle.attachmentType);
+    const a = vehicle && vehicle.attachments && vehicle.attachments[index];
+    if (!a || !a.data) { this.toast('No attachment found', 'error'); return; }
+    this.openAttachmentViewer(a.data, a.name, a.type);
   }
 
   async openAttachmentViewer(blob, name, type) {
@@ -1156,20 +1195,14 @@ class FleetApp {
     };
     if (!data.name) { this.toast('Vehicle name is required', 'error'); return; }
 
-    let existingVehicle = null;
-    if (id) {
-      existingVehicle = this.vehicles.find(v => v.id === parseInt(id));
-    }
-
-    if (this.tempVehicleAttachment) {
-      data.attachment = await this.blobToBase64(this.tempVehicleAttachment.blob);
-      data.attachmentName = this.tempVehicleAttachment.name;
-      data.attachmentType = this.tempVehicleAttachment.type;
-    } else if (existingVehicle && existingVehicle.attachment) {
-      data.attachment = await this.blobToBase64(existingVehicle.attachment);
-      data.attachmentName = existingVehicle.attachmentName;
-      data.attachmentType = existingVehicle.attachmentType;
-    }
+    // this.vehicleAttachments is the full desired set of attachments —
+    // whatever's left in it (existing ones kept, existing ones removed,
+    // new ones added) is exactly what gets written here.
+    data.attachments = await Promise.all(this.vehicleAttachments.map(async a => ({
+      name: a.name,
+      type: a.type,
+      data: await this.blobToBase64(a.data)
+    })));
 
     const encrypted = await CryptoEngine.encrypt(data, this.cryptoKey);
     const tx = this.db.transaction('vehicles', 'readwrite');
@@ -1190,7 +1223,7 @@ class FleetApp {
         tx.onerror = () => j(tx.error);
       });
     }
-    this.tempVehicleAttachment = null;
+    this.vehicleAttachments = [];
     await this.loadVehicles();
     this.closeModal('vehicleModal');
     this.toast(id ? 'Vehicle updated' : 'Vehicle added');
@@ -1231,7 +1264,8 @@ class FleetApp {
   }
 
   showAddEntry(type) {
-    this.clearAttachment();
+    this.entryAttachments = [];
+    this.renderAttachmentChips('entry');
     document.getElementById('entryId').value = '';
     document.getElementById('entryType').value = type;
     document.getElementById('entryCategoryName').value = '';
@@ -1260,7 +1294,10 @@ class FleetApp {
   async editEntry(id) {
     const e = this.entries.find(x => x.id === id);
     if (!e) return;
-    this.clearAttachment();
+    // Work from a shallow copy so removing/adding items while the modal
+    // is open doesn't mutate the loaded entry record until Save.
+    this.entryAttachments = (e.attachments || []).map(a => ({ ...a }));
+    this.renderAttachmentChips('entry');
     document.getElementById('entryId').value = e.id;
     document.getElementById('entryType').value = e.type || 'maintenance';
     
@@ -1282,13 +1319,6 @@ class FleetApp {
     document.getElementById('entryService').value = e.service != null ? e.service : '';
     document.getElementById('entryDepreciation').value = e.depreciation != null ? e.depreciation : '';
     
-    if (e.attachmentName) {
-      document.getElementById('attachmentLabel').textContent = '📎 ' + e.attachmentName;
-      document.getElementById('attachmentLabel').classList.add('text-amber-700', 'bg-amber-50', 'border-amber-300');
-      document.getElementById('clearAttachmentBtn').classList.remove('hidden');
-      document.getElementById('attachmentName').textContent = 'Existing: ' + e.attachmentName + ' (upload new to replace)';
-      document.getElementById('attachmentName').classList.remove('hidden');
-    }
     document.getElementById('entryModalTitle').textContent = 'Edit Entry';
     this.openModal('entryModal');
   }
@@ -1316,20 +1346,14 @@ class FleetApp {
       depreciation: document.getElementById('entryDepreciation').value !== '' ? parseFloat(document.getElementById('entryDepreciation').value) : null
     };
 
-    let existingEntry = null;
-    if (id) {
-      existingEntry = this.entries.find(x => x.id === parseInt(id));
-    }
-
-    if (this.tempAttachment) {
-      data.attachment = await this.blobToBase64(this.tempAttachment.blob);
-      data.attachmentName = this.tempAttachment.name;
-      data.attachmentType = this.tempAttachment.type;
-    } else if (existingEntry && existingEntry.attachment) {
-      data.attachment = await this.blobToBase64(existingEntry.attachment);
-      data.attachmentName = existingEntry.attachmentName;
-      data.attachmentType = existingEntry.attachmentType;
-    }
+    // this.entryAttachments is the full desired set of attachments —
+    // whatever's left in it (existing ones kept, existing ones removed,
+    // new ones added) is exactly what gets written here.
+    data.attachments = await Promise.all(this.entryAttachments.map(async a => ({
+      name: a.name,
+      type: a.type,
+      data: await this.blobToBase64(a.data)
+    })));
 
     const encrypted = await CryptoEngine.encrypt(data, this.cryptoKey);
     const tx = this.db.transaction('entries', 'readwrite');
@@ -1350,7 +1374,7 @@ class FleetApp {
         tx.onerror = () => j(tx.error);
       });
     }
-    this.tempAttachment = null;
+    this.entryAttachments = [];
     await this.loadEntries(this.currentVehicleId);
     this.closeModal('entryModal');
     this.renderDashboard();
@@ -1376,25 +1400,8 @@ class FleetApp {
   }
 
   onFileSelected(input) {
-    if (input.files.length > 0) {
-      const file = input.files[0];
-      if (!this.checkFileSize(file)) { input.value = ''; return; }
-      this.tempAttachment = { blob: file, name: file.name, type: file.type };
-      document.getElementById('attachmentLabel').textContent = '📎 ' + file.name;
-      document.getElementById('attachmentLabel').classList.add('text-amber-700', 'bg-amber-50', 'border-amber-300');
-      document.getElementById('clearAttachmentBtn').classList.remove('hidden');
-      document.getElementById('attachmentName').textContent = 'Ready to upload: ' + file.name;
-      document.getElementById('attachmentName').classList.remove('hidden');
-    }
-  }
-
-  clearAttachment() {
-    this.tempAttachment = null;
-    document.getElementById('entryAttachment').value = '';
-    document.getElementById('attachmentLabel').textContent = '📎 Click to upload file';
-    document.getElementById('attachmentLabel').classList.remove('text-amber-700', 'bg-amber-50', 'border-amber-300');
-    document.getElementById('clearAttachmentBtn').classList.add('hidden');
-    document.getElementById('attachmentName').classList.add('hidden');
+    this.addFilesToAttachments('entry', input.files);
+    input.value = '';
   }
 
   blobToBase64(blob) {
@@ -1412,6 +1419,35 @@ class FleetApp {
     const ia = new Uint8Array(ab);
     for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
     return new Blob([ab], { type });
+  }
+
+  // Normalizes a freshly-decrypted vehicle/entry record onto a single
+  // `attachments: [{name, type, data}]` array (data = Blob), converting
+  // any base64 dataURL strings back into Blobs. Also migrates records
+  // still holding the old single-attachment fields (attachment /
+  // attachmentName / attachmentType) from before multi-attachment
+  // support — those get folded into a one-item attachments array and
+  // the legacy fields are dropped from the in-memory record (they're
+  // fully replaced in storage the next time that record is saved).
+  migrateAttachments(decrypted) {
+    if (Array.isArray(decrypted.attachments)) {
+      decrypted.attachments = decrypted.attachments.map(a => ({
+        name: a.name,
+        type: a.type,
+        data: typeof a.data === 'string' ? this.base64ToBlob(a.data, a.type) : a.data
+      }));
+    } else if (decrypted.attachment && typeof decrypted.attachment === 'string') {
+      decrypted.attachments = [{
+        name: decrypted.attachmentName,
+        type: decrypted.attachmentType,
+        data: this.base64ToBlob(decrypted.attachment, decrypted.attachmentType)
+      }];
+    } else {
+      decrypted.attachments = [];
+    }
+    delete decrypted.attachment;
+    delete decrypted.attachmentName;
+    delete decrypted.attachmentType;
   }
 
   cur() {
@@ -1499,16 +1535,24 @@ class FleetApp {
         const vehicles = [];
         for (const v of this.vehicles) {
           const copy = { ...v };
-          if (v.attachment && v.attachment instanceof Blob) {
-            copy.attachment = await this.blobToBase64(v.attachment);
+          if (Array.isArray(v.attachments) && v.attachments.length) {
+            copy.attachments = await Promise.all(v.attachments.map(async a => ({
+              name: a.name,
+              type: a.type,
+              data: a.data instanceof Blob ? await this.blobToBase64(a.data) : a.data
+            })));
           }
           vehicles.push(copy);
         }
         const entries = [];
         for (const e of this.entries) {
           const copy = { ...e };
-          if (e.attachment && e.attachment instanceof Blob) {
-            copy.attachment = await this.blobToBase64(e.attachment);
+          if (Array.isArray(e.attachments) && e.attachments.length) {
+            copy.attachments = await Promise.all(e.attachments.map(async a => ({
+              name: a.name,
+              type: a.type,
+              data: a.data instanceof Blob ? await this.blobToBase64(a.data) : a.data
+            })));
           }
           entries.push(copy);
         }
@@ -1644,8 +1688,8 @@ class FleetApp {
     const el = document.getElementById(id);
     el.classList.add('hidden');
     el.classList.remove('flex');
-    if (id === 'vehicleModal') this.tempVehicleAttachment = null;
-    if (id === 'entryModal') this.tempAttachment = null;
+    if (id === 'vehicleModal') this.vehicleAttachments = [];
+    if (id === 'entryModal') this.entryAttachments = [];
     if (id === 'attachmentViewerModal') this.closeAttachmentViewer();
   }
 

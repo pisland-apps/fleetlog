@@ -131,15 +131,22 @@ site's Service Worker/cache in devtools, not to assume the deploy failed.
 
 ## 📎 Attachments & In-App Viewer
 
-Vehicles and maintenance/depreciation/other entries can each carry one file
-attachment (image, PDF, or Word doc — 5 MB cap, enforced on upload):
+Vehicles and maintenance/depreciation/other entries can each carry **any
+number** of file attachments (image, PDF, or Word doc — 5 MB cap per file,
+enforced on upload):
 - **Vehicle Details** — for registration cards, duty-exemption certs, etc.
 - **Maintenance Log entries** — for receipts, invoices, workshop reports.
+
+In the Add/Edit modal, tap **➕ Add Attachment** to pick one or more files
+(repeat as many times as needed); each attachment appears as a chip with
+its own **✕** to remove it. Nothing is deleted or replaced until you tap
+**Save** — the attachment list in the modal at that moment is exactly what
+gets saved, so removing a chip and saving actually removes that file.
 
 Clicking an attachment opens it in an in-app viewer instead of the browser:
 - **Images** render directly, and also show as a small thumbnail "logo"
   next to the entry/vehicle wherever they're referenced — if there's no
-  attachment, or it isn't an image, no thumbnail is shown.
+  image attachment, no thumbnail is shown.
 - **PDFs** are rendered page-by-page onto `<canvas>` via pdf.js, avoiding
   the inconsistent (and sometimes blocked) way browsers handle PDFs in
   `<iframe>`s or navigated-to blob/data URLs.
@@ -152,6 +159,10 @@ This mirrors the attachment viewer in the companion Wealth Planner app.
 ---
 
 ## 📝 Changelog
+
+### v1.9
+- ✅ **Multiple Attachments**: Vehicles and entries can now carry any number of image/PDF/doc attachments instead of just one — tap ➕ Add Attachment to add more, each with its own remove (✕) chip
+- 🐛 **Fixed**: Removing an attachment and saving now actually deletes it. Previously, clicking the ✕ next to an existing attachment reset the upload field but the save logic silently fell back to the old file, so the attachment was never actually removed or replaced.
 
 ### v1.8
 - ✅ **In-App Attachment Viewer**: Images and PDFs on vehicles/entries now open in an in-app viewer (pdf.js for PDFs, Blob object URLs for images) instead of downloading straight to disk
