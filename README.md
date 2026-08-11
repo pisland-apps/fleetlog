@@ -192,6 +192,27 @@ This mirrors the attachment viewer in the companion Wealth Planner app.
 
 ## 📝 Changelog
 
+### v1.9.5 — Biometric Unlock Made PRF-Only
+- 🔒 **Removed the non-hardware-backed biometric fallback entirely.**
+  Previously (v1.9.3–1.9.4), on browsers/authenticators without WebAuthn
+  PRF support, enabling Fingerprint/Face ID unlock stored the wrapping
+  key in IndexedDB right next to the data it wraps — labeled "convenience
+  only" in the UI, but in practice it was worse than not offering the
+  feature at all: it let anyone with raw DB access skip straight past
+  the passcode's PBKDF2 hardening. Enrollment now requires genuine PRF
+  support; if the authenticator doesn't support it, nothing is stored
+  and the app tells the user their passcode remains the only unlock
+  method.
+- 🔒 **Existing legacy records are auto-migrated on load.** If a device
+  still has a pre-1.9.5 non-PRF biometric record, it's deleted
+  automatically the next time the app opens, with a toast explaining
+  why. The user falls back to passcode-only unlock and can re-enable
+  biometric unlock, which will only succeed where PRF is actually
+  supported.
+- No change to the 'prf' mode itself (hardware-derived wrapping key,
+  never stored) — that was already the safe path and is now the only
+  path.
+
 ### v1.9.4 — pdf.js Security Update
 - 🔒 **pdf.js upgraded 3.11.174 → 6.2.108.** The version shipped through
   v1.9.3 predates the fix for **CVE-2024-4367** (arbitrary JavaScript

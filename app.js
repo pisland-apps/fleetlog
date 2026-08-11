@@ -15,8 +15,8 @@ const DB_VERSION = 4;
 // and do NOT sync automatically — bump both together by hand on every
 // deploy. See the matching comment above CACHE_NAME in sw.js.
 // ---------------------------------------------------------------------
-const APP_VERSION = '1.9.4';
-const APP_VERSION_DATE = '2026-08-11';
+const APP_VERSION = '1.9.5';
+const APP_VERSION_DATE = '2026-08-12';
 
 // Populate the badge as soon as this script runs — deliberately not inside
 // the DOMContentLoaded handler further down, so it appears immediately and
@@ -187,7 +187,22 @@ class FleetApp {
     };
 
     bioReq.onsuccess = () => {
-      this.biometricRecord = bioReq.result || null;
+      const record = bioReq.result || null;
+      if (record && record.mode !== 'prf') {
+        // Legacy 'wrapped' record from v1.9.3/1.9.4, or a pre-v1.9.3
+        // record with no `mode` at all — both stored the wrapping key
+        // in the clear, so they're removed automatically rather than
+        // kept working. The user falls back to passcode-only unlock
+        // and can re-enroll; it'll only succeed if their device/browser
+        // actually supports the WebAuthn PRF extension. See the
+        // BIOMETRIC KEY WRAPPING comment further down for why.
+        const delTx = this.db.transaction('config', 'readwrite');
+        delTx.objectStore('config').delete('biometric');
+        this.biometricRecord = null;
+        this.toast('Fingerprint/Face ID unlock was reset — it previously stored its key in a way that didn\'t protect against local data theft. Re-enable it from Settings if supported.', 'error');
+      } else {
+        this.biometricRecord = record;
+      }
       this.showBiometricUnlockButton();
     };
   }
@@ -293,14 +308,9 @@ class FleetApp {
     if (this.isBiometricPlatformSupported()) {
       toggleBtn.classList.remove('hidden');
       toggleBtn.classList.toggle('text-amber-400', !!this.biometricRecord);
-      if (this.biometricRecord) {
-        const mode = this.biometricRecord.mode || 'wrapped';
-        toggleBtn.title = mode === 'prf'
-          ? 'Disable Fingerprint / Face ID Unlock (hardware-protected)'
-          : 'Disable Fingerprint / Face ID Unlock (convenience only on this device)';
-      } else {
-        toggleBtn.title = 'Enable Fingerprint / Face ID Unlock';
-      }
+      toggleBtn.title = this.biometricRecord
+        ? 'Disable Fingerprint / Face ID Unlock (hardware-protected)'
+        : 'Enable Fingerprint / Face ID Unlock';
     } else {
       toggleBtn.classList.add('hidden');
     }
@@ -321,22 +331,25 @@ class FleetApp {
   }
 
   // ==================== BIOMETRIC KEY WRAPPING ====================
-  // Two modes, recorded as `record.mode`:
+  // PRF-only, as of v1.9.5. The wrapping key is never generated or
+  // stored anywhere. It's derived fresh on every unlock from the
+  // authenticator's WebAuthn PRF extension output (a hardware-bound
+  // secret + a stored, non-secret salt) via HKDF. Someone who copies the
+  // raw IndexedDB files still cannot decrypt the wrapped key, because the
+  // wrapping key material never touches disk — it only ever exists
+  // transiently in memory after a real fingerprint/Face ID assertion.
   //
-  // 'prf' (preferred): the wrapping key is never generated or stored at
-  // all. It's derived fresh on every unlock from the authenticator's
-  // WebAuthn PRF extension output (hardware-bound secret + a stored,
-  // non-secret salt) via HKDF. Someone who copies the raw IndexedDB
-  // files still cannot decrypt the wrapped key, because the wrapping
-  // key material never touches disk — it only ever exists transiently
-  // in memory after a real fingerprint/Face ID assertion.
-  //
-  // 'wrapped' (fallback, old behavior): used only when the browser/
-  // authenticator doesn't support the PRF extension. Here the wrapping
-  // key IS stored in IndexedDB right next to the data it wraps, so it
-  // provides no protection against someone with raw DB access — it's a
-  // convenience unlock gated by the app's own UI, not by cryptography.
-  // Existing installs enrolled before v1.9.3 are treated as 'wrapped'.
+  // v1.9.3–1.9.4 also offered a 'wrapped' fallback mode for browsers/
+  // authenticators without PRF support, where the wrapping key WAS
+  // stored in IndexedDB right next to the data it wraps. That added no
+  // protection against anyone with raw DB access — worse, it let them
+  // skip straight past the passcode's PBKDF2 hardening entirely, which
+  // is a strictly worse position than not offering biometric unlock at
+  // all on those devices. That mode has been removed: enrollment now
+  // requires PRF support, and any 'wrapped' record found from a prior
+  // version is deleted automatically on load (see checkAuthStatus()) —
+  // the user falls back to passcode-only unlock and can re-enroll if
+  // their device/browser turns out to support PRF.
 
   isPrfSupported(credential) {
     const results = credential.getClientExtensionResults && credential.getClientExtensionResults();
@@ -383,47 +396,40 @@ class FleetApp {
       });
       if (!credential) throw new Error('Enrollment cancelled');
 
+      if (!this.isPrfSupported(credential)) {
+        // No PRF support on this browser/authenticator combination — see
+        // the block comment above for why we don't fall back to a
+        // storage-only "wrapped" scheme anymore. The passkey we just
+        // created is simply left unused; there's no JS-level way to
+        // delete it, but it's harmless sitting unreferenced on the
+        // device/platform authenticator.
+        this.toast('This browser/device doesn\'t support hardware-backed biometric unlock, so it wasn\'t enabled — your passcode is still the only unlock method.', 'error');
+        return;
+      }
+
+      // Immediately follow up with a get() to actually pull the PRF
+      // secret for this credential (create() only confirms support).
+      const assertion = await navigator.credentials.get({
+        publicKey: {
+          challenge: crypto.getRandomValues(new Uint8Array(32)),
+          allowCredentials: [{ id: credential.rawId, type: 'public-key' }],
+          userVerification: 'required',
+          timeout: 60000,
+          extensions: { prf: { eval: { first: prfSalt } } }
+        }
+      });
+      const wrappingKey = await this.derivePrfWrappingKey(assertion, prfSalt);
       const rawKey = await crypto.subtle.exportKey('raw', this.cryptoKey);
       const iv = crypto.getRandomValues(new Uint8Array(12));
-      let record;
-
-      if (this.isPrfSupported(credential)) {
-        // Immediately follow up with a get() to actually pull the PRF
-        // secret for this credential (create() only confirms support).
-        const assertion = await navigator.credentials.get({
-          publicKey: {
-            challenge: crypto.getRandomValues(new Uint8Array(32)),
-            allowCredentials: [{ id: credential.rawId, type: 'public-key' }],
-            userVerification: 'required',
-            timeout: 60000,
-            extensions: { prf: { eval: { first: prfSalt } } }
-          }
-        });
-        const wrappingKey = await this.derivePrfWrappingKey(assertion, prfSalt);
-        const wrappedKey = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, wrappingKey, rawKey);
-        record = {
-          key: 'biometric',
-          mode: 'prf',
-          credentialId: this.bufToBase64(credential.rawId),
-          prfSalt: Array.from(prfSalt),
-          iv: Array.from(iv),
-          wrappedKey: this.bufToBase64(wrappedKey)
-        };
-      } else {
-        // Fallback: no PRF support, so this device can only offer a
-        // convenience unlock, not a hardware-backed one. See comment above.
-        const wrappingKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
-        const wrappedKey = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, wrappingKey, rawKey);
-        const rawWrappingKey = await crypto.subtle.exportKey('raw', wrappingKey);
-        record = {
-          key: 'biometric',
-          mode: 'wrapped',
-          credentialId: this.bufToBase64(credential.rawId),
-          wrappingKey: this.bufToBase64(rawWrappingKey),
-          iv: Array.from(iv),
-          wrappedKey: this.bufToBase64(wrappedKey)
-        };
-      }
+      const wrappedKey = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, wrappingKey, rawKey);
+      const record = {
+        key: 'biometric',
+        mode: 'prf',
+        credentialId: this.bufToBase64(credential.rawId),
+        prfSalt: Array.from(prfSalt),
+        iv: Array.from(iv),
+        wrappedKey: this.bufToBase64(wrappedKey)
+      };
 
       const tx = this.db.transaction('config', 'readwrite');
       tx.objectStore('config').put(record);
@@ -431,11 +437,7 @@ class FleetApp {
 
       this.biometricRecord = record;
       this.refreshBiometricToggle();
-      if (record.mode === 'prf') {
-        this.toast('Fingerprint / Face ID unlock enabled (hardware-protected)');
-      } else {
-        this.toast('Fingerprint / Face ID unlock enabled (convenience only — this device/browser doesn\'t support hardware-backed protection)');
-      }
+      this.toast('Fingerprint / Face ID unlock enabled (hardware-protected)');
     } catch (err) {
       this.toast('Could not enable biometric unlock: ' + err.message, 'error');
     }
@@ -466,35 +468,26 @@ class FleetApp {
 
   async unlockWithBiometric() {
     if (!this.biometricRecord) return;
+    // Should always be 'prf' by this point — checkAuthStatus() deletes any
+    // legacy non-PRF record before this method is ever reachable. Guard
+    // kept as a defensive check, not an expected path.
+    if (this.biometricRecord.mode !== 'prf') {
+      this.toast('Biometric unlock record is invalid — please re-enable it', 'error');
+      return;
+    }
     try {
-      const mode = this.biometricRecord.mode || 'wrapped'; // records from before v1.9.3 have no `mode`
-      let wrappingKey;
-
-      if (mode === 'prf') {
-        const prfSalt = new Uint8Array(this.biometricRecord.prfSalt);
-        const assertion = await navigator.credentials.get({
-          publicKey: {
-            challenge: crypto.getRandomValues(new Uint8Array(32)),
-            allowCredentials: [{ id: this.base64ToBuf(this.biometricRecord.credentialId), type: 'public-key' }],
-            userVerification: 'required',
-            timeout: 60000,
-            extensions: { prf: { eval: { first: prfSalt } } }
-          }
-        });
-        if (!assertion) throw new Error('Authentication cancelled');
-        wrappingKey = await this.derivePrfWrappingKey(assertion, prfSalt);
-      } else {
-        const assertion = await navigator.credentials.get({
-          publicKey: {
-            challenge: crypto.getRandomValues(new Uint8Array(32)),
-            allowCredentials: [{ id: this.base64ToBuf(this.biometricRecord.credentialId), type: 'public-key' }],
-            userVerification: 'required',
-            timeout: 60000
-          }
-        });
-        if (!assertion) throw new Error('Authentication cancelled');
-        wrappingKey = await crypto.subtle.importKey('raw', this.base64ToBuf(this.biometricRecord.wrappingKey), { name: 'AES-GCM' }, false, ['decrypt']);
-      }
+      const prfSalt = new Uint8Array(this.biometricRecord.prfSalt);
+      const assertion = await navigator.credentials.get({
+        publicKey: {
+          challenge: crypto.getRandomValues(new Uint8Array(32)),
+          allowCredentials: [{ id: this.base64ToBuf(this.biometricRecord.credentialId), type: 'public-key' }],
+          userVerification: 'required',
+          timeout: 60000,
+          extensions: { prf: { eval: { first: prfSalt } } }
+        }
+      });
+      if (!assertion) throw new Error('Authentication cancelled');
+      const wrappingKey = await this.derivePrfWrappingKey(assertion, prfSalt);
 
       const iv = new Uint8Array(this.biometricRecord.iv);
       const rawKey = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, wrappingKey, this.base64ToBuf(this.biometricRecord.wrappedKey));
