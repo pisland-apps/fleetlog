@@ -9,8 +9,13 @@
 // — bump both together by hand on every deploy. See the matching comment
 // above APP_VERSION near the top of app.js.
 // ---------------------------------------------------------------------
-const CACHE_NAME = 'fleetlog-pwa-v1.9.2';
+const CACHE_NAME = 'fleetlog-pwa-v1.9.4';
 
+// As of v1.9.3 every asset (Tailwind, pdf.js + worker, Inter webfont) is
+// vendored locally under ./vendor and ./fonts instead of being fetched
+// from cdn.jsdelivr.net / cdnjs.cloudflare.com / fonts.googleapis.com /
+// fonts.gstatic.com at runtime — so there's no separate CDN_ASSETS list
+// to keep in sync anymore. It's all same-origin and lives in STATIC_ASSETS.
 const STATIC_ASSETS = [
   './',
   './index.html',
@@ -26,14 +31,17 @@ const STATIC_ASSETS = [
   './icons/icon-152x152.png',
   './icons/icon-192x192.png',
   './icons/icon-384x384.png',
-  './icons/icon-512x512.png'
-];
-
-const CDN_ASSETS = [
-  'https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3/dist/index.global.js',
-  'https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap',
-  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
-  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
+  './icons/icon-512x512.png',
+  './vendor/tailwind/tailwind.js',
+  './vendor/pdfjs/pdf.min.mjs',
+  './vendor/pdfjs/pdf.worker.min.mjs',
+  './fonts/inter.css',
+  './fonts/files/inter-latin-300-normal.woff2',
+  './fonts/files/inter-latin-400-normal.woff2',
+  './fonts/files/inter-latin-500-normal.woff2',
+  './fonts/files/inter-latin-600-normal.woff2',
+  './fonts/files/inter-latin-700-normal.woff2',
+  './fonts/files/inter-latin-800-normal.woff2'
 ];
 
 // Allow the page to force an already-installed, waiting service worker to
@@ -49,7 +57,7 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
       console.log('[SW] Pre-caching static assets');
-      return cache.addAll([...STATIC_ASSETS, ...CDN_ASSETS]);
+      return cache.addAll(STATIC_ASSETS);
     }).then(() => self.skipWaiting())
   );
 });

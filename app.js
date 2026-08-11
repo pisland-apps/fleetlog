@@ -15,8 +15,8 @@ const DB_VERSION = 4;
 // and do NOT sync automatically — bump both together by hand on every
 // deploy. See the matching comment above CACHE_NAME in sw.js.
 // ---------------------------------------------------------------------
-const APP_VERSION = '1.9.2';
-const APP_VERSION_DATE = '2026-08-09';
+const APP_VERSION = '1.9.4';
+const APP_VERSION_DATE = '2026-08-11';
 
 // Populate the badge as soon as this script runs — deliberately not inside
 // the DOMContentLoaded handler further down, so it appears immediately and
@@ -183,12 +183,92 @@ class FleetApp {
         document.getElementById('authSubmitBtn').textContent = 'Set Passcode & Initialize';
       }
       document.getElementById('lockScreen').classList.remove('hidden');
+      this.applyLockoutUI();
     };
 
     bioReq.onsuccess = () => {
       this.biometricRecord = bioReq.result || null;
       this.showBiometricUnlockButton();
     };
+  }
+
+  // ==================== PASSCODE ATTEMPT LOCKOUT ====================
+  // Slows down repeated wrong-passcode guesses made through this UI by
+  // introducing a growing delay after LOCKOUT_THRESHOLD consecutive
+  // failures. State lives in IndexedDB config store under 'authLockout'
+  // so it survives a page reload (otherwise reloading would silently
+  // reset the counter). This is a UI-level speed bump only — anyone who
+  // has copied the raw IndexedDB files can just edit or delete this
+  // record, or brute-force the PBKDF2-derived key entirely outside the
+  // app, so it does not defend against offline/local file extraction.
+  static LOCKOUT_THRESHOLD = 5;
+  static LOCKOUT_BASE_MS = 5000;
+  static LOCKOUT_MAX_MS = 5 * 60 * 1000;
+
+  async getAuthLockout() {
+    const tx = this.db.transaction('config', 'readonly');
+    const req = tx.objectStore('config').get('authLockout');
+    return new Promise((resolve) => {
+      req.onsuccess = () => resolve(req.result || { key: 'authLockout', failCount: 0, lockedUntil: 0 });
+      req.onerror = () => resolve({ key: 'authLockout', failCount: 0, lockedUntil: 0 });
+    });
+  }
+
+  async setAuthLockout(record) {
+    const tx = this.db.transaction('config', 'readwrite');
+    tx.objectStore('config').put(record);
+    return new Promise((r, j) => { tx.oncomplete = r; tx.onerror = j; });
+  }
+
+  async recordFailedAttempt() {
+    const record = await this.getAuthLockout();
+    record.failCount = (record.failCount || 0) + 1;
+    if (record.failCount >= FleetApp.LOCKOUT_THRESHOLD) {
+      const overBy = record.failCount - FleetApp.LOCKOUT_THRESHOLD;
+      const delay = Math.min(FleetApp.LOCKOUT_BASE_MS * Math.pow(2, overBy), FleetApp.LOCKOUT_MAX_MS);
+      record.lockedUntil = Date.now() + delay;
+    }
+    await this.setAuthLockout(record);
+    this.applyLockoutUI();
+  }
+
+  async clearAuthLockout() {
+    await this.setAuthLockout({ key: 'authLockout', failCount: 0, lockedUntil: 0 });
+    this.applyLockoutUI();
+  }
+
+  async applyLockoutUI() {
+    if (this._lockoutInterval) { clearInterval(this._lockoutInterval); this._lockoutInterval = null; }
+    const record = await this.getAuthLockout();
+    const msg = document.getElementById('authLockoutMsg');
+    const btn = document.getElementById('authSubmitBtn');
+    const input = document.getElementById('passcodeInput');
+    if (!msg || !btn || !input) return;
+
+    const tick = () => {
+      const remaining = record.lockedUntil - Date.now();
+      if (remaining <= 0) {
+        msg.classList.add('hidden');
+        btn.disabled = false;
+        input.disabled = false;
+        if (this._lockoutInterval) { clearInterval(this._lockoutInterval); this._lockoutInterval = null; }
+        return;
+      }
+      const secs = Math.ceil(remaining / 1000);
+      msg.textContent = `Too many attempts. Try again in ${secs}s.`;
+      msg.classList.remove('hidden');
+      btn.disabled = true;
+      input.disabled = true;
+    };
+
+    if (record.lockedUntil && record.lockedUntil > Date.now()) {
+      tick();
+      this._lockoutInterval = setInterval(tick, 1000);
+    } else {
+      msg.classList.add('hidden');
+      btn.disabled = false;
+      input.disabled = false;
+    }
   }
 
   isBiometricPlatformSupported() {
@@ -213,7 +293,14 @@ class FleetApp {
     if (this.isBiometricPlatformSupported()) {
       toggleBtn.classList.remove('hidden');
       toggleBtn.classList.toggle('text-amber-400', !!this.biometricRecord);
-      toggleBtn.title = this.biometricRecord ? 'Disable Fingerprint / Face ID Unlock' : 'Enable Fingerprint / Face ID Unlock';
+      if (this.biometricRecord) {
+        const mode = this.biometricRecord.mode || 'wrapped';
+        toggleBtn.title = mode === 'prf'
+          ? 'Disable Fingerprint / Face ID Unlock (hardware-protected)'
+          : 'Disable Fingerprint / Face ID Unlock (convenience only on this device)';
+      } else {
+        toggleBtn.title = 'Enable Fingerprint / Face ID Unlock';
+      }
     } else {
       toggleBtn.classList.add('hidden');
     }
@@ -233,6 +320,45 @@ class FleetApp {
     return bytes.buffer;
   }
 
+  // ==================== BIOMETRIC KEY WRAPPING ====================
+  // Two modes, recorded as `record.mode`:
+  //
+  // 'prf' (preferred): the wrapping key is never generated or stored at
+  // all. It's derived fresh on every unlock from the authenticator's
+  // WebAuthn PRF extension output (hardware-bound secret + a stored,
+  // non-secret salt) via HKDF. Someone who copies the raw IndexedDB
+  // files still cannot decrypt the wrapped key, because the wrapping
+  // key material never touches disk — it only ever exists transiently
+  // in memory after a real fingerprint/Face ID assertion.
+  //
+  // 'wrapped' (fallback, old behavior): used only when the browser/
+  // authenticator doesn't support the PRF extension. Here the wrapping
+  // key IS stored in IndexedDB right next to the data it wraps, so it
+  // provides no protection against someone with raw DB access — it's a
+  // convenience unlock gated by the app's own UI, not by cryptography.
+  // Existing installs enrolled before v1.9.3 are treated as 'wrapped'.
+
+  isPrfSupported(credential) {
+    const results = credential.getClientExtensionResults && credential.getClientExtensionResults();
+    return !!(results && results.prf && results.prf.enabled);
+  }
+
+  async derivePrfWrappingKey(assertionOrCreate, salt) {
+    const results = assertionOrCreate.getClientExtensionResults();
+    const prfOutput = results && results.prf && results.prf.results && results.prf.results.first;
+    if (!prfOutput) throw new Error('PRF output unavailable');
+    // HKDF over the 32-byte PRF secret to derive a dedicated AES-GCM key,
+    // rather than importing the PRF bytes directly.
+    const hkdfKey = await crypto.subtle.importKey('raw', prfOutput, 'HKDF', false, ['deriveKey']);
+    return crypto.subtle.deriveKey(
+      { name: 'HKDF', hash: 'SHA-256', salt, info: new TextEncoder().encode('FleetLog biometric wrap v1') },
+      hkdfKey,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt', 'decrypt']
+    );
+  }
+
   async enrollBiometric() {
     if (!this.cryptoKey) { this.toast('Unlock the app first', 'error'); return; }
     if (!this.isBiometricPlatformSupported()) {
@@ -242,6 +368,7 @@ class FleetApp {
     try {
       const challenge = crypto.getRandomValues(new Uint8Array(32));
       const userId = crypto.getRandomValues(new Uint8Array(16));
+      const prfSalt = crypto.getRandomValues(new Uint8Array(32));
       const credential = await navigator.credentials.create({
         publicKey: {
           challenge,
@@ -250,26 +377,53 @@ class FleetApp {
           pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
           authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', requireResidentKey: false },
           timeout: 60000,
-          attestation: 'none'
+          attestation: 'none',
+          extensions: { prf: {} }
         }
       });
       if (!credential) throw new Error('Enrollment cancelled');
 
-      // Export the active encryption key and wrap it behind a random device-local
-      // key. The fingerprint/Face ID prompt gates access to it on future unlocks.
       const rawKey = await crypto.subtle.exportKey('raw', this.cryptoKey);
-      const wrappingKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
       const iv = crypto.getRandomValues(new Uint8Array(12));
-      const wrappedKey = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, wrappingKey, rawKey);
-      const rawWrappingKey = await crypto.subtle.exportKey('raw', wrappingKey);
+      let record;
 
-      const record = {
-        key: 'biometric',
-        credentialId: this.bufToBase64(credential.rawId),
-        wrappingKey: this.bufToBase64(rawWrappingKey),
-        iv: Array.from(iv),
-        wrappedKey: this.bufToBase64(wrappedKey)
-      };
+      if (this.isPrfSupported(credential)) {
+        // Immediately follow up with a get() to actually pull the PRF
+        // secret for this credential (create() only confirms support).
+        const assertion = await navigator.credentials.get({
+          publicKey: {
+            challenge: crypto.getRandomValues(new Uint8Array(32)),
+            allowCredentials: [{ id: credential.rawId, type: 'public-key' }],
+            userVerification: 'required',
+            timeout: 60000,
+            extensions: { prf: { eval: { first: prfSalt } } }
+          }
+        });
+        const wrappingKey = await this.derivePrfWrappingKey(assertion, prfSalt);
+        const wrappedKey = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, wrappingKey, rawKey);
+        record = {
+          key: 'biometric',
+          mode: 'prf',
+          credentialId: this.bufToBase64(credential.rawId),
+          prfSalt: Array.from(prfSalt),
+          iv: Array.from(iv),
+          wrappedKey: this.bufToBase64(wrappedKey)
+        };
+      } else {
+        // Fallback: no PRF support, so this device can only offer a
+        // convenience unlock, not a hardware-backed one. See comment above.
+        const wrappingKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+        const wrappedKey = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, wrappingKey, rawKey);
+        const rawWrappingKey = await crypto.subtle.exportKey('raw', wrappingKey);
+        record = {
+          key: 'biometric',
+          mode: 'wrapped',
+          credentialId: this.bufToBase64(credential.rawId),
+          wrappingKey: this.bufToBase64(rawWrappingKey),
+          iv: Array.from(iv),
+          wrappedKey: this.bufToBase64(wrappedKey)
+        };
+      }
 
       const tx = this.db.transaction('config', 'readwrite');
       tx.objectStore('config').put(record);
@@ -277,7 +431,11 @@ class FleetApp {
 
       this.biometricRecord = record;
       this.refreshBiometricToggle();
-      this.toast('Fingerprint / Face ID unlock enabled');
+      if (record.mode === 'prf') {
+        this.toast('Fingerprint / Face ID unlock enabled (hardware-protected)');
+      } else {
+        this.toast('Fingerprint / Face ID unlock enabled (convenience only — this device/browser doesn\'t support hardware-backed protection)');
+      }
     } catch (err) {
       this.toast('Could not enable biometric unlock: ' + err.message, 'error');
     }
@@ -309,18 +467,35 @@ class FleetApp {
   async unlockWithBiometric() {
     if (!this.biometricRecord) return;
     try {
-      const challenge = crypto.getRandomValues(new Uint8Array(32));
-      const assertion = await navigator.credentials.get({
-        publicKey: {
-          challenge,
-          allowCredentials: [{ id: this.base64ToBuf(this.biometricRecord.credentialId), type: 'public-key' }],
-          userVerification: 'required',
-          timeout: 60000
-        }
-      });
-      if (!assertion) throw new Error('Authentication cancelled');
+      const mode = this.biometricRecord.mode || 'wrapped'; // records from before v1.9.3 have no `mode`
+      let wrappingKey;
 
-      const wrappingKey = await crypto.subtle.importKey('raw', this.base64ToBuf(this.biometricRecord.wrappingKey), { name: 'AES-GCM' }, false, ['decrypt']);
+      if (mode === 'prf') {
+        const prfSalt = new Uint8Array(this.biometricRecord.prfSalt);
+        const assertion = await navigator.credentials.get({
+          publicKey: {
+            challenge: crypto.getRandomValues(new Uint8Array(32)),
+            allowCredentials: [{ id: this.base64ToBuf(this.biometricRecord.credentialId), type: 'public-key' }],
+            userVerification: 'required',
+            timeout: 60000,
+            extensions: { prf: { eval: { first: prfSalt } } }
+          }
+        });
+        if (!assertion) throw new Error('Authentication cancelled');
+        wrappingKey = await this.derivePrfWrappingKey(assertion, prfSalt);
+      } else {
+        const assertion = await navigator.credentials.get({
+          publicKey: {
+            challenge: crypto.getRandomValues(new Uint8Array(32)),
+            allowCredentials: [{ id: this.base64ToBuf(this.biometricRecord.credentialId), type: 'public-key' }],
+            userVerification: 'required',
+            timeout: 60000
+          }
+        });
+        if (!assertion) throw new Error('Authentication cancelled');
+        wrappingKey = await crypto.subtle.importKey('raw', this.base64ToBuf(this.biometricRecord.wrappingKey), { name: 'AES-GCM' }, false, ['decrypt']);
+      }
+
       const iv = new Uint8Array(this.biometricRecord.iv);
       const rawKey = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, wrappingKey, this.base64ToBuf(this.biometricRecord.wrappedKey));
       const cryptoKey = await crypto.subtle.importKey('raw', rawKey, { name: 'AES-GCM' }, true, ['encrypt', 'decrypt']);
@@ -332,6 +507,7 @@ class FleetApp {
       if (verified.check !== 'FLEETLOG_VALID') throw new Error('Key mismatch');
 
       this.cryptoKey = cryptoKey;
+      await this.clearAuthLockout();
       this.unlockApp();
     } catch (err) {
       this.toast('Biometric unlock failed: ' + err.message, 'error');
@@ -343,6 +519,12 @@ class FleetApp {
     const input = document.getElementById('passcodeInput');
     const passcode = input.value;
     if (!passcode) return;
+
+    const lockout = await this.getAuthLockout();
+    if (lockout.lockedUntil && lockout.lockedUntil > Date.now()) {
+      this.applyLockoutUI();
+      return;
+    }
 
     try {
       if (!this.isSetup) {
@@ -358,6 +540,7 @@ class FleetApp {
         });
         await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = j; });
         this.isSetup = true;
+        await this.clearAuthLockout();
         this.unlockApp();
       } else {
         this.cryptoKey = await CryptoEngine.deriveKey(passcode, this.salt);
@@ -368,11 +551,13 @@ class FleetApp {
         try {
           const verified = await CryptoEngine.decrypt(authRecord.verifier, this.cryptoKey);
           if (verified.check === "FLEETLOG_VALID") {
+            await this.clearAuthLockout();
             this.unlockApp();
           } else {
             throw new Error();
           }
         } catch (err) {
+          await this.recordFailedAttempt();
           alert('Incorrect Passcode');
           input.value = '';
         }
@@ -1511,16 +1696,34 @@ class FleetApp {
   showExportModal() {
     document.getElementById('exportEncryptToggle').checked = true;
     document.getElementById('unencryptedNotice').classList.add('hidden');
+    const ack = document.getElementById('unencryptedAckCheckbox');
+    if (ack) ack.checked = false;
     this.openModal('exportModal');
+    this.updateExportButtonState();
   }
 
   toggleExportNotice(checkbox) {
     const notice = document.getElementById('unencryptedNotice');
+    const ack = document.getElementById('unencryptedAckCheckbox');
     if (checkbox.checked) {
       notice.classList.add('hidden');
     } else {
       notice.classList.remove('hidden');
+      if (ack) ack.checked = false;
     }
+    this.updateExportButtonState();
+  }
+
+  // Requires an explicit "I understand" acknowledgement before an
+  // unencrypted (plaintext) backup can be downloaded, on top of the
+  // existing warning banner — extra friction so this can't be triggered
+  // by an absent-minded click past a passive warning.
+  updateExportButtonState() {
+    const encrypted = document.getElementById('exportEncryptToggle').checked;
+    const ack = document.getElementById('unencryptedAckCheckbox');
+    const btn = document.getElementById('downloadBackupBtn');
+    if (!btn) return;
+    btn.disabled = !encrypted && !(ack && ack.checked);
   }
 
   async confirmExportData() {
@@ -1634,7 +1837,7 @@ class FleetApp {
         }
 
         if (!keyOk) {
-          const backupPasscode = prompt('This backup was encrypted with a different passcode or on a different device.\nEnter the passcode that was used to create it:');
+          const backupPasscode = await this.promptForBackupPasscode();
           if (!backupPasscode) { this.toast('Import cancelled', 'error'); input.value = ''; return; }
           backupKey = await CryptoEngine.deriveKey(backupPasscode, new Uint8Array(data.salt));
           if (sample) {
@@ -1685,6 +1888,49 @@ class FleetApp {
       this.toast('Import failed: ' + err.message, 'error');
     }
     input.value = '';
+  }
+
+  // ==================== BACKUP PASSCODE MODAL ====================
+  // In-app replacement for the old native prompt() used during import
+  // when a backup was encrypted with a different passcode/device. Native
+  // prompt() can't be styled or reliably cleared, and its typed value can
+  // persist in some browsers' devtools console history; this modal keeps
+  // entry inside the app's own password-type input, cleared on both
+  // submit and cancel. Returns a Promise<string|null>, resolved by
+  // submitBackupPasscode()/cancelBackupPasscode() below.
+
+  promptForBackupPasscode() {
+    return new Promise((resolve) => {
+      this._backupPasscodeResolve = resolve;
+      const input = document.getElementById('backupPasscodeInput');
+      if (input) input.value = '';
+      this.openModal('backupPasscodeModal');
+      if (input) setTimeout(() => input.focus(), 0);
+    });
+  }
+
+  submitBackupPasscode(e) {
+    if (e) e.preventDefault();
+    const input = document.getElementById('backupPasscodeInput');
+    const value = input ? input.value : '';
+    if (input) input.value = '';
+    this.closeModal('backupPasscodeModal');
+    if (this._backupPasscodeResolve) {
+      const resolve = this._backupPasscodeResolve;
+      this._backupPasscodeResolve = null;
+      resolve(value || null);
+    }
+  }
+
+  cancelBackupPasscode() {
+    const input = document.getElementById('backupPasscodeInput');
+    if (input) input.value = '';
+    this.closeModal('backupPasscodeModal');
+    if (this._backupPasscodeResolve) {
+      const resolve = this._backupPasscodeResolve;
+      this._backupPasscodeResolve = null;
+      resolve(null);
+    }
   }
 
   showConfirm(title, message, onConfirm) {
@@ -1776,6 +2022,10 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('bankLoanModal').addEventListener('click', e => { if (e.target === e.currentTarget) app.closeModal('bankLoanModal'); });
   document.getElementById('confirmModal').addEventListener('click', e => { if (e.target === e.currentTarget) app.closeModal('confirmModal'); });
   document.getElementById('attachmentViewerModal').addEventListener('click', e => { if (e.target === e.currentTarget) app.closeModal('attachmentViewerModal'); });
+  // Backdrop click resolves the pending promptForBackupPasscode() promise
+  // with null, same as the Cancel button — not a plain closeModal(), so
+  // whatever's awaiting the passcode doesn't hang forever.
+  document.getElementById('backupPasscodeModal').addEventListener('click', e => { if (e.target === e.currentTarget) app.cancelBackupPasscode(); });
 
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
@@ -1785,6 +2035,7 @@ document.addEventListener('DOMContentLoaded', () => {
       app.closeModal('bankLoanModal');
       app.closeModal('confirmModal');
       app.closeModal('attachmentViewerModal');
+      app.cancelBackupPasscode();
     }
   });
 });

@@ -1,4 +1,7 @@
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+  /* Vendored locally from npm @fontsource/inter (latin subset, weights
+     300–800, woff2 only) so no request ever goes to fonts.googleapis.com
+     / fonts.gstatic.com — see ./fonts/inter.css and ./fonts/files/. */
+  @import url('./fonts/inter.css');
   body { font-family: 'Inter', sans-serif; }
   .scrollbar-hide::-webkit-scrollbar { display: none; }
   .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }

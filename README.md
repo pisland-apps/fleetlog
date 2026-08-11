@@ -92,11 +92,43 @@ AES-256-GCM Key ──► Encrypt/Decrypt all IndexedDB records
 
 ## 🛠️ Tech Stack
 
-- **Frontend:** Vanilla HTML5 + Tailwind CSS (CDN) + Vanilla JS
+- **Frontend:** Vanilla HTML5 + Tailwind CSS (vendored locally) + Vanilla JS
 - **Storage:** IndexedDB (native browser API)
 - **Crypto:** Web Crypto API (`SubtleCrypto`)
 - **PWA:** Service Worker + Web App Manifest
 - **Icons:** Generated PNG set (72×72 … 512×512)
+
+---
+
+## 📦 Fully Local-Hosted Assets
+
+As of v1.9.3, FleetLog makes **zero runtime requests to any third-party
+origin**. Everything the page needs — JS libraries, the PDF worker, and
+the webfont — ships in the repo and is served same-origin:
+
+| Asset | Was loaded from | Now vendored at | Source (npm) |
+|-------|------------------|------------------|---------------|
+| Tailwind CSS | `cdn.jsdelivr.net` | `vendor/tailwind/tailwind.js` | `@tailwindcss/browser@4.3.3` |
+| pdf.js | `cdnjs.cloudflare.com` | `vendor/pdfjs/pdf.min.mjs` | `pdfjs-dist@6.2.108` |
+| pdf.js worker | `cdnjs.cloudflare.com` | `vendor/pdfjs/pdf.worker.min.mjs` | `pdfjs-dist@6.2.108` |
+| Inter webfont | `fonts.googleapis.com` / `fonts.gstatic.com` | `fonts/inter.css` + `fonts/files/*.woff2` | `@fontsource/inter@5.3.0` (latin subset, weights 300–800, woff2 only) |
+
+Why this matters: previously, `script-src`/`style-src`/`font-src`/
+`worker-src` in the CSP had to trust those four external origins. If any
+one of them were ever compromised, MITM'd on a hostile network, or
+simply went down, it could run arbitrary code in the page (for the JS
+origins) or break the app outright. The CSP now allows only `'self'`
+everywhere except `img-src blob:` (needed for the in-app attachment
+viewer) — see the comment above the `<meta http-equiv="Content-Security-
+Policy">` tag in `index.html`.
+
+**Updating a vendored dependency:** re-run `npm pack <package>@<version>`
+for the relevant package, copy the built file(s) into `vendor/` or
+`fonts/` at the same paths, and add any new/renamed files to
+`STATIC_ASSETS` in `sw.js` (bump `CACHE_NAME` too, per the "Updating the
+App" section above). Licenses for the vendored code (Tailwind, pdf.js,
+Inter) are included in each npm package and remain under their original
+terms (Apache-2.0/MIT/SIL OFL-1.1 respectively) — not re-stated here.
 
 ---
 
@@ -159,6 +191,62 @@ This mirrors the attachment viewer in the companion Wealth Planner app.
 ---
 
 ## 📝 Changelog
+
+### v1.9.4 — pdf.js Security Update
+- 🔒 **pdf.js upgraded 3.11.174 → 6.2.108.** The version shipped through
+  v1.9.3 predates the fix for **CVE-2024-4367** (arbitrary JavaScript
+  execution via a specially crafted font embedded in a malicious PDF,
+  patched upstream in pdfjs-dist@4.2.67). Since PDF attachments in this
+  app can come from anywhere the user imports them from, staying current
+  matters here more than in most dependencies. Went with the current
+  latest stable rather than stopping at the minimum fixed version, to
+  pick up everything patched since.
+- ⚠️ **Breaking internal change:** pdfjs-dist 4.0+ dropped the old
+  UMD/global-script build (`pdf.min.js`) entirely — it now ships only as
+  an ES module (`pdf.min.mjs`). `pdf-worker-init.js` now `import`s it and
+  assigns it to `window.pdfjsLib` itself; `index.html` loads that file
+  with `<script type="module">` instead of a plain `<script>`. No change
+  to how `app.js` calls into `pdfjsLib` — same `getDocument`/`getPage`/
+  `getViewport`/`render` calls as before.
+- 🔒 CSP `script-src` gained `'wasm-unsafe-eval'`. pdf.js 6.2.108's
+  worker bundles a WebAssembly-based JPX/JPEG2000 image codec; a
+  same-origin Worker inherits the page's CSP, and without this keyword
+  some browsers block WebAssembly instantiation under a strict
+  `script-src`, which would silently break rendering for any PDF
+  attachment containing a JPX-encoded image. This does not enable plain
+  `eval()`/`new Function()` — confirmed neither appears anywhere in the
+  vendored pdf.js build, so `'unsafe-eval'` itself was never needed.
+
+### v1.9.3 — Security Hardening
+- 🔒 **Fully local-hosted assets**: Tailwind, pdf.js (+worker), and the Inter
+  webfont no longer load from any CDN (`cdn.jsdelivr.net`,
+  `cdnjs.cloudflare.com`, `fonts.googleapis.com`, `fonts.gstatic.com`) — all
+  vendored under `vendor/` and `fonts/`. CSP tightened to `'self'` only
+  (plus `img-src blob:` for the attachment viewer). See "Fully
+  Local-Hosted Assets" above.
+- 🔒 **Passcode attempt lockout**: After 5 consecutive wrong passcodes,
+  the unlock form imposes a growing delay (5s, 10s, 20s… capped at 5
+  minutes) before another attempt is accepted. This only slows down
+  attempts made through the app's own UI — it can't stop someone
+  brute-forcing the PBKDF2-derived key against a raw copy of the
+  IndexedDB files outside the app.
+- 🔒 **Unencrypted export confirmation**: Downloading a plaintext backup
+  now requires explicitly checking an "I understand" box, on top of the
+  existing warning banner, before the Download button is enabled.
+- 🔒 **Hardware-backed biometric unlock (where supported)**: Fingerprint/
+  Face ID unlock now uses the WebAuthn PRF extension when the platform
+  authenticator supports it — the wrapping key is derived fresh from the
+  authenticator on every unlock and is never stored, so a copy of the
+  raw IndexedDB files alone can no longer yield it. Devices/browsers
+  without PRF support fall back to the previous behavior and are labeled
+  "convenience only" in the UI, since on that path the wrapping key
+  is still stored alongside the data it wraps and offers no protection
+  beyond the app's own unlock gate. Existing enrollments from before
+  v1.9.3 are treated as the fallback mode automatically.
+- 🔒 **In-app backup passcode entry**: Importing a backup encrypted with
+  a different passcode/device now uses a proper in-app modal instead of
+  the browser's native `prompt()`, which can't be styled or reliably
+  cleared and may linger in some browsers' devtools history.
 
 ### v1.9.2
 - 🐛 **Fixed**: "Export failed: Invalid string length" when exporting an encrypted backup with sizeable attachments. Encrypted export data is now base64-encoded instead of written out as a JSON array of one number per byte — the old format could inflate a single ~6 MB attachment's pretty-printed JSON to 60+ MB, which some browsers refuse to build as a single string. Import still reads older backup files exported before this fix.
