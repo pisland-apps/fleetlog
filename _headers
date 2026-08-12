@@ -1,0 +1,20 @@
+# Optional — only takes effect on hosts that read a _headers file
+# (Cloudflare Pages, Netlify). Plain GitHub Pages ignores this file
+# entirely and serves purely on the <meta> CSP in index.html instead.
+#
+# Why this file exists: an HTTP-only Content-Security-Policy directive
+# can't be expressed via <meta http-equiv="Content-Security-Policy">
+# in index.html — frame-ancestors is one of those, so on GitHub Pages
+# there is currently no way to stop this app from being framed by
+# another site (clickjacking). If you deploy somewhere that honors
+# this file, it closes that gap. If you deploy on GitHub Pages, this
+# file is simply inert — no functional change either way.
+#
+# Keep this CSP in sync BY HAND with the <meta> tag in index.html —
+# they are two independent copies and nothing enforces they match.
+/*
+  Content-Security-Policy: default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' blob:; manifest-src 'self'; worker-src 'self'; connect-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'; frame-ancestors 'none'
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()

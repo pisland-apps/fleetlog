@@ -75,18 +75,21 @@ fleetlog-pwa/
 ## 🔐 Security Architecture
 
 ```
-User Passcode
+User Passcode (min. 6 characters on setup)
      │
      ▼
-PBKDF2 (100k iterations, SHA-256, random 16-byte salt)
+PBKDF2 (600k iterations as of v1.9.6, SHA-256, random 16-byte salt)
      │
      ▼
 AES-256-GCM Key ──► Encrypt/Decrypt all IndexedDB records
 ```
 
-- **Salt** and **verifier** are stored in IndexedDB `config` store.
+- **Salt**, **iteration count**, and **verifier** are stored in IndexedDB `config` store.
 - **Vehicles** and **entries** are stored as encrypted payloads; raw data never touches disk unencrypted.
 - If the passcode is lost, **data cannot be recovered** — there is no backdoor.
+- **Passcode strength:** a minimum of 6 characters is enforced when *creating* a passcode. This isn't enforced retroactively on unlock (an existing shorter passcode still works) — the in-app lockout only slows guesses made through the UI, so passcode strength is what actually protects against someone who has copied the raw IndexedDB files and is brute-forcing offline.
+- **Iteration count upgrades automatically:** installs created before v1.9.6 (100k iterations) are silently upgraded to 600k — re-encrypting all stored records under a freshly derived key — the first time the app is unlocked with the *passcode* (not biometric) on v1.9.6+. If biometric unlock was enabled, it's reset by this upgrade and needs re-enabling once, since it wraps the old key's bytes.
+- **Clickjacking (`frame-ancestors`):** can't be set via the `<meta>` CSP tag in `index.html` — it's an HTTP-header-only directive. See the repo-root `_headers` file, which sets it (plus `X-Frame-Options` etc.) on hosts that honor a `_headers` file (e.g. Cloudflare Pages, Netlify). Plain GitHub Pages ignores that file, so this gap remains open there.
 
 ---
 
@@ -191,6 +194,47 @@ This mirrors the attachment viewer in the companion Wealth Planner app.
 ---
 
 ## 📝 Changelog
+
+### v1.9.6 — Passcode Hardening & Attachment-Type Enforcement
+- 🔒 **PBKDF2 iterations raised 100k → 600k**, in line with current OWASP
+  guidance. Existing installs are upgraded automatically and
+  transparently the first time they're unlocked with the *passcode* on
+  v1.9.6+ — every stored vehicle/entry record is re-encrypted under a
+  freshly derived key in the same operation (the derived key IS the
+  AES-GCM key, so a bare constant bump would otherwise leave old
+  installs unable to decrypt their own data). Runs unawaited right
+  after unlock so it doesn't add latency to opening the app, and simply
+  retries on the next unlock if it fails partway. If biometric unlock
+  was enabled, it's reset by this upgrade (it wraps the old key's raw
+  bytes) — the user just re-enables it once from Settings. New
+  encrypted backups now also carry the iteration count; older backups
+  (no `iterations` field) are read correctly as 100k.
+- 🔒 **Minimum 6-character passcode enforced on setup.** Only applies
+  to *creating* a new passcode — deliberately not enforced via HTML
+  `minlength` on the shared lock-screen input, since that would also
+  block existing users with a shorter passcode from ever unlocking
+  again. This is a real gap being closed, not cosmetic: the in-app
+  lockout only throttles guesses made through this UI and does nothing
+  against someone brute-forcing a copied IndexedDB file offline —
+  passcode strength is what actually defends against that.
+- 🔒 **`frame-ancestors` gap documented and closable.** The `<meta>` CSP
+  tag can't carry this HTTP-header-only directive, so this app has
+  never been able to prevent being framed by another site on GitHub
+  Pages. Added a repo-root `_headers` file (Cloudflare Pages / Netlify
+  convention) that sets `frame-ancestors 'none'` plus `X-Frame-Options`,
+  `X-Content-Type-Options`, `Referrer-Policy`, and a restrictive
+  `Permissions-Policy` for anyone hosting somewhere that honors it.
+  Inert (ignored) on plain GitHub Pages — keep it in sync by hand with
+  the `<meta>` CSP if you edit either.
+- 🔒 **Attachment file type is now checked in JS, not just the file
+  picker.** `accept="image/*,.pdf,.doc,.docx"` on the file inputs was
+  always just a picker hint — drag-and-drop and "All Files" bypass it
+  in most browsers. Rejected files now get a clear toast instead of
+  silently being accepted and stored. This was never an execution risk
+  (nothing stored is ever run — only `image/*` and `application/pdf`
+  attachments get rendered at all, via `<img>`/pdf.js respectively,
+  everything else already fell through to "Preview not available"); this
+  just matches what's actually stored to what the UI promises.
 
 ### v1.9.5 — Biometric Unlock Made PRF-Only
 - 🔒 **Removed the non-hardware-backed biometric fallback entirely.**

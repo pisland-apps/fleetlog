@@ -15,7 +15,7 @@ const DB_VERSION = 4;
 // and do NOT sync automatically — bump both together by hand on every
 // deploy. See the matching comment above CACHE_NAME in sw.js.
 // ---------------------------------------------------------------------
-const APP_VERSION = '1.9.5';
+const APP_VERSION = '1.9.6';
 const APP_VERSION_DATE = '2026-08-12';
 
 // Populate the badge as soon as this script runs — deliberately not inside
@@ -31,7 +31,18 @@ const APP_VERSION_DATE = '2026-08-12';
 })();
 
 class CryptoEngine {
-  static async deriveKey(passcode, salt) {
+  // LEGACY_ITERATIONS is the PBKDF2 iteration count used by every 'auth'
+  // record and encrypted backup created before v1.9.6 (OWASP's 2023
+  // guidance at the time). CURRENT_ITERATIONS is what v1.9.6+ uses for
+  // any *new* setup and what existing installs get silently upgraded to
+  // on their next successful unlock (see FleetApp.maybeUpgradeIterations).
+  // Never hardcode 100000 elsewhere — always read the iteration count
+  // that was actually stored alongside the salt, since two different
+  // installs may legitimately be on two different counts mid-rollout.
+  static LEGACY_ITERATIONS = 100000;
+  static CURRENT_ITERATIONS = 600000;
+
+  static async deriveKey(passcode, salt, iterations = CryptoEngine.LEGACY_ITERATIONS) {
     const enc = new TextEncoder();
     const keyMaterial = await crypto.subtle.importKey(
       "raw", enc.encode(passcode), { name: "PBKDF2" }, false, ["deriveKey"]
@@ -40,7 +51,7 @@ class CryptoEngine {
       {
         name: "PBKDF2",
         salt: salt,
-        iterations: 100000,
+        iterations: iterations,
         hash: "SHA-256"
       },
       keyMaterial,
@@ -173,13 +184,17 @@ class FleetApp {
       if (res) {
         this.isSetup = true;
         this.salt = new Uint8Array(res.salt);
+        // Older installs (pre-v1.9.6) never stored an `iterations` field at
+        // all — they were always created at CryptoEngine.LEGACY_ITERATIONS,
+        // so that's the correct fallback, not CURRENT_ITERATIONS.
+        this.iterations = res.iterations || CryptoEngine.LEGACY_ITERATIONS;
         document.getElementById('lockTitle').textContent = 'Welcome Back';
         document.getElementById('lockSubtitle').textContent = 'Enter passcode to unlock encrypted data store.';
         document.getElementById('authSubmitBtn').textContent = 'Unlock App';
       } else {
         this.isSetup = false;
         document.getElementById('lockTitle').textContent = 'Create Passcode';
-        document.getElementById('lockSubtitle').textContent = 'Set up a passcode to secure all app data with AES-256 encryption.';
+        document.getElementById('lockSubtitle').textContent = `Set up a passcode (min. ${FleetApp.MIN_PASSCODE_LENGTH} characters) to secure all app data with AES-256 encryption.`;
         document.getElementById('authSubmitBtn').textContent = 'Set Passcode & Initialize';
       }
       document.getElementById('lockScreen').classList.remove('hidden');
@@ -219,6 +234,17 @@ class FleetApp {
   static LOCKOUT_THRESHOLD = 5;
   static LOCKOUT_BASE_MS = 5000;
   static LOCKOUT_MAX_MS = 5 * 60 * 1000;
+
+  // Minimum passcode length enforced only when CREATING a passcode
+  // (handleAuthSubmit's !this.isSetup branch). Deliberately NOT enforced
+  // via an HTML minlength attribute on #passcodeInput, because that same
+  // input is reused for unlocking — an HTML-level minlength would block
+  // existing users whose passcode predates this check from ever unlocking
+  // again. The offline-brute-force risk this mitigates is documented
+  // above LOCKOUT_THRESHOLD: the in-UI lockout only slows guesses made
+  // through this form, so passcode strength is the real defense against
+  // someone who has copied the raw IndexedDB files.
+  static MIN_PASSCODE_LENGTH = 6;
 
   async getAuthLockout() {
     const tx = this.db.transaction('config', 'readonly');
@@ -468,6 +494,13 @@ class FleetApp {
 
   async unlockWithBiometric() {
     if (!this.biometricRecord) return;
+    // Deliberately does NOT call maybeUpgradeIterations() — that upgrade
+    // needs the plaintext passcode to re-derive a new PBKDF2 key, which
+    // this path never has (that's the whole point of biometric unlock).
+    // An install that's always unlocked via fingerprint/Face ID stays on
+    // whatever iteration count it was set up with until the user unlocks
+    // with the passcode at least once after upgrading to v1.9.6+.
+    //
     // Should always be 'prf' by this point — checkAuthStatus() deletes any
     // legacy non-PRF record before this method is ever reachable. Guard
     // kept as a defensive check, not an expected path.
@@ -521,14 +554,20 @@ class FleetApp {
 
     try {
       if (!this.isSetup) {
+        if (passcode.length < FleetApp.MIN_PASSCODE_LENGTH) {
+          alert(`Please choose a passcode of at least ${FleetApp.MIN_PASSCODE_LENGTH} characters.`);
+          return;
+        }
         this.salt = crypto.getRandomValues(new Uint8Array(16));
-        this.cryptoKey = await CryptoEngine.deriveKey(passcode, this.salt);
+        this.iterations = CryptoEngine.CURRENT_ITERATIONS;
+        this.cryptoKey = await CryptoEngine.deriveKey(passcode, this.salt, this.iterations);
         const verifier = await CryptoEngine.encrypt({ check: "FLEETLOG_VALID" }, this.cryptoKey);
         
         const tx = this.db.transaction('config', 'readwrite');
         tx.objectStore('config').put({
           key: 'auth',
           salt: Array.from(this.salt),
+          iterations: this.iterations,
           verifier
         });
         await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = j; });
@@ -536,7 +575,7 @@ class FleetApp {
         await this.clearAuthLockout();
         this.unlockApp();
       } else {
-        this.cryptoKey = await CryptoEngine.deriveKey(passcode, this.salt);
+        this.cryptoKey = await CryptoEngine.deriveKey(passcode, this.salt, this.iterations);
         const tx = this.db.transaction('config', 'readonly');
         const req = tx.objectStore('config').get('auth');
         const authRecord = await new Promise((r, j) => { req.onsuccess = () => r(req.result); req.onerror = j; });
@@ -546,6 +585,11 @@ class FleetApp {
           if (verified.check === "FLEETLOG_VALID") {
             await this.clearAuthLockout();
             this.unlockApp();
+            // Fire-and-forget: bring pre-v1.9.6 installs up to the current
+            // PBKDF2 iteration count transparently. Never awaited here —
+            // it re-encrypts every record, which shouldn't block getting
+            // into the app. See maybeUpgradeIterations() for details.
+            this.maybeUpgradeIterations(passcode);
           } else {
             throw new Error();
           }
@@ -557,6 +601,90 @@ class FleetApp {
       }
     } catch (err) {
       alert('Authentication error: ' + err.message);
+    }
+  }
+
+  // ==================== PBKDF2 ITERATION UPGRADE (v1.9.6+) ====================
+  // Raises an install that was set up under CryptoEngine.LEGACY_ITERATIONS
+  // (100k, the count used through v1.9.5) up to CURRENT_ITERATIONS (600k)
+  // the first time it successfully unlocks on v1.9.6+. This can't be a
+  // simple "bump the constant" change: the derived key IS the AES-GCM key
+  // that encrypts every vehicle/entry record, so changing the iteration
+  // count changes the key entirely and every record has to be
+  // re-encrypted under the new key in the same operation, or the app
+  // would fail to decrypt its own data on the very next load.
+  //
+  // Runs unawaited right after a successful passcode unlock (never on the
+  // biometric path — see below) so it doesn't add latency to getting into
+  // the app; failures are logged and silently ignored; the user stays on
+  // LEGACY_ITERATIONS and this simply retries on their next passcode
+  // unlock rather than surfacing an error for a background hardening step.
+  async maybeUpgradeIterations(passcode) {
+    if (this.iterations >= CryptoEngine.CURRENT_ITERATIONS) return;
+    try {
+      const newSalt = crypto.getRandomValues(new Uint8Array(16));
+      const newKey = await CryptoEngine.deriveKey(passcode, newSalt, CryptoEngine.CURRENT_ITERATIONS);
+
+      // Re-encrypt every record under the new key. Read raw (not through
+      // loadVehicles/loadEntries, which only pull the currently-selected
+      // vehicle's entries) so records for every vehicle are covered.
+      const readTx = this.db.transaction(['vehicles', 'entries'], 'readonly');
+      const vehiclesRaw = await new Promise((r, j) => {
+        const q = readTx.objectStore('vehicles').getAll();
+        q.onsuccess = () => r(q.result); q.onerror = () => j(q.error);
+      });
+      const entriesRaw = await new Promise((r, j) => {
+        const q = readTx.objectStore('entries').getAll();
+        q.onsuccess = () => r(q.result); q.onerror = () => j(q.error);
+      });
+
+      const newVehicleRows = [];
+      for (const v of vehiclesRaw) {
+        if (!v.payload) continue;
+        const decrypted = await CryptoEngine.decrypt(v.payload, this.cryptoKey);
+        newVehicleRows.push({ id: v.id, payload: await CryptoEngine.encrypt(decrypted, newKey) });
+      }
+      const newEntryRows = [];
+      for (const e of entriesRaw) {
+        if (!e.payload) continue;
+        const decrypted = await CryptoEngine.decrypt(e.payload, this.cryptoKey);
+        newEntryRows.push({ id: e.id, vehicleId: e.vehicleId, payload: await CryptoEngine.encrypt(decrypted, newKey) });
+      }
+      const newVerifier = await CryptoEngine.encrypt({ check: 'FLEETLOG_VALID' }, newKey);
+
+      // Biometric unlock (if enabled) wraps the OLD key's raw bytes — once
+      // this.cryptoKey is replaced below, that wrapped copy decrypts to a
+      // key that no longer matches the new verifier. There's no way to
+      // re-wrap it here without another fingerprint/Face-ID prompt mid-
+      // flow, so it's invalidated instead; the user just re-enables it
+      // from Settings, same UX as the legacy-'wrapped'-record cleanup in
+      // checkAuthStatus().
+      const hadBiometric = !!this.biometricRecord;
+
+      const writeTx = this.db.transaction(['vehicles', 'entries', 'config'], 'readwrite');
+      for (const row of newVehicleRows) writeTx.objectStore('vehicles').put(row);
+      for (const row of newEntryRows) writeTx.objectStore('entries').put(row);
+      writeTx.objectStore('config').put({
+        key: 'auth',
+        salt: Array.from(newSalt),
+        iterations: CryptoEngine.CURRENT_ITERATIONS,
+        verifier: newVerifier
+      });
+      if (hadBiometric) writeTx.objectStore('config').delete('biometric');
+      await new Promise((r, j) => { writeTx.oncomplete = r; writeTx.onerror = () => j(writeTx.error); });
+
+      this.salt = newSalt;
+      this.iterations = CryptoEngine.CURRENT_ITERATIONS;
+      this.cryptoKey = newKey;
+
+      if (hadBiometric) {
+        this.biometricRecord = null;
+        this.showBiometricUnlockButton();
+        this.refreshBiometricToggle();
+        this.toast('Security upgrade complete. Fingerprint/Face ID unlock was reset — please re-enable it from Settings.', 'error');
+      }
+    } catch (err) {
+      console.error('PBKDF2 iteration upgrade failed (will retry on next unlock):', err);
     }
   }
 
@@ -1252,6 +1380,10 @@ class FleetApp {
   addFilesToAttachments(scope, fileList) {
     const arr = scope === 'entry' ? this.entryAttachments : this.vehicleAttachments;
     for (const file of fileList) {
+      if (!this.isAllowedAttachmentFile(file)) {
+        this.toast(`"${file.name}" isn't an accepted attachment type (images, PDF, or Word docs only)`, 'error');
+        continue;
+      }
       if (!this.checkFileSize(file)) continue;
       arr.push({ name: file.name, type: file.type, data: file });
     }
@@ -1686,6 +1818,27 @@ class FleetApp {
     return true;
   }
 
+  // The file inputs' accept="image/*,.pdf,.doc,.docx" attribute is only a
+  // picker filter — it doesn't stop drag-and-drop, and some browsers let
+  // "All Files" be chosen anyway, so a mismatched or unexpected file type
+  // could still reach addFilesToAttachments() without this check. Nothing
+  // stored here is ever executed (see openAttachmentViewer: only
+  // image/* renders via <img>, only application/pdf goes through pdf.js,
+  // everything else falls through to "Preview not available"), so this
+  // isn't closing an execution risk — it's matching stored data to what
+  // the UI actually promises, and avoiding silently accepting arbitrary
+  // file types the picker was supposed to filter out.
+  isAllowedAttachmentFile(file) {
+    if (file.type && file.type.startsWith('image/')) return true;
+    if (file.type === 'application/pdf') return true;
+    if (file.type === 'application/msword') return true;
+    if (file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') return true;
+    // Fall back to extension when the browser/OS didn't supply a MIME
+    // type (common for .doc/.docx on some platforms, and for files
+    // dragged in from certain file managers).
+    return /\.(pdf|docx?|jpe?g|png|gif|webp|bmp|svg|heic|heif)$/i.test(file.name || '');
+  }
+
   showExportModal() {
     document.getElementById('exportEncryptToggle').checked = true;
     document.getElementById('unencryptedNotice').classList.add('hidden');
@@ -1757,6 +1910,7 @@ class FleetApp {
           exportedAt: new Date().toISOString(),
           isEncrypted: true,
           salt: Array.from(this.salt),
+          iterations: this.iterations,
           version: '4.0'
         };
       } else {
@@ -1832,7 +1986,10 @@ class FleetApp {
         if (!keyOk) {
           const backupPasscode = await this.promptForBackupPasscode();
           if (!backupPasscode) { this.toast('Import cancelled', 'error'); input.value = ''; return; }
-          backupKey = await CryptoEngine.deriveKey(backupPasscode, new Uint8Array(data.salt));
+          // data.iterations is absent on backups exported before v1.9.6 —
+          // deriveKey's default parameter (LEGACY_ITERATIONS) covers that
+          // case correctly since those backups were always created at 100k.
+          backupKey = await CryptoEngine.deriveKey(backupPasscode, new Uint8Array(data.salt), data.iterations || CryptoEngine.LEGACY_ITERATIONS);
           if (sample) {
             try { await CryptoEngine.decrypt(sample.payload, backupKey); } catch (e) { throw new Error('Incorrect passcode for this backup'); }
           }
