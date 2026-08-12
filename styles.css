@@ -10,6 +10,27 @@
   .modal-enter { animation: modalIn 0.2s ease-out; }
   @keyframes modalIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
 
+  /* Lock-screen numpad — large tap targets for mobile/tablet passcode
+     entry (see #passcodeNumpad markup in index.html). touch-action
+     manipulation kills the ~300ms tap delay / double-tap-zoom on
+     mobile browsers; user-select: none stops the digit getting
+     highlighted/selected on repeated taps. */
+  .numpad-btn {
+    padding: 1rem 0;
+    font-size: 1.375rem;
+    font-weight: 600;
+    line-height: 1;
+    color: #1e293b;
+    background: #f1f5f9;
+    border-radius: 0.75rem;
+    transition: background-color 0.1s ease-out;
+    touch-action: manipulation;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  .numpad-btn:hover { background: #e2e8f0; }
+  .numpad-btn:active { background: #cbd5e1; }
+
   /* Particulars Wrapping Style */
   .particulars-text {
     white-space: normal !important;

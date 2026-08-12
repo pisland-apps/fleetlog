@@ -15,8 +15,8 @@ const DB_VERSION = 4;
 // and do NOT sync automatically — bump both together by hand on every
 // deploy. See the matching comment above CACHE_NAME in sw.js.
 // ---------------------------------------------------------------------
-const APP_VERSION = '1.9.7';
-const APP_VERSION_DATE = '2026-08-12';
+const APP_VERSION = '1.9.8';
+const APP_VERSION_DATE = '2026-08-13';
 
 // Populate the badge as soon as this script runs — deliberately not inside
 // the DOMContentLoaded handler further down, so it appears immediately and
@@ -457,6 +457,42 @@ class FleetApp {
     }
   }
 
+  // ==================== LOCK-SCREEN NUMPAD ====================
+  // Backs the big on-screen numpad in #lockScreen (see index.html).
+  // #passcodeInput carries inputmode="none" so tapping it — or these
+  // buttons calling .focus() on it — never pops the mobile virtual
+  // keyboard; digits are appended directly to input.value instead.
+  // The passcode itself isn't digit-only (MIN_PASSCODE_LENGTH is the
+  // only rule), so toggleNumpadKeyboardMode() below is the escape
+  // hatch for anyone who wants letters/symbols.
+  numpadPress(digit) {
+    const input = document.getElementById('passcodeInput');
+    if (!input) return;
+    input.value += digit;
+    input.focus();
+  }
+
+  numpadBackspace() {
+    const input = document.getElementById('passcodeInput');
+    if (!input) return;
+    input.value = input.value.slice(0, -1);
+    input.focus();
+  }
+
+  // Flips #passcodeInput between inputmode="none" (numpad-only, no
+  // mobile keyboard) and inputmode="text" (normal keyboard pops up —
+  // needed for a passcode with letters/symbols on a touch-only
+  // device). The numpad buttons keep working either way.
+  toggleNumpadKeyboardMode() {
+    const input = document.getElementById('passcodeInput');
+    const btn = document.getElementById('numpadKeyboardToggle');
+    if (!input) return;
+    const switchingToKeyboard = input.getAttribute('inputmode') === 'none';
+    input.setAttribute('inputmode', switchingToKeyboard ? 'text' : 'none');
+    if (btn) btn.textContent = switchingToKeyboard ? '🔢' : '🔤';
+    input.focus();
+  }
+
   async handleAuthSubmit(e) {
     e.preventDefault();
     const input = document.getElementById('passcodeInput');
@@ -618,6 +654,14 @@ class FleetApp {
     document.getElementById('appContainer').classList.add('hidden');
     document.getElementById('lockScreen').classList.remove('hidden');
     this.showBiometricUnlockButton();
+
+    // Reset numpad back to its default no-keyboard state each time the
+    // lock screen reappears, so a previous "use keyboard" toggle doesn't
+    // silently carry over into the next unlock attempt.
+    const input = document.getElementById('passcodeInput');
+    const toggleBtn = document.getElementById('numpadKeyboardToggle');
+    if (input) input.setAttribute('inputmode', 'none');
+    if (toggleBtn) toggleBtn.textContent = '🔤';
   }
 
   async loadVehicles() {

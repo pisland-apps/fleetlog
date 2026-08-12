@@ -97,8 +97,36 @@
     </div>
     <form data-submit="handleAuthSubmit" data-submit-args='["@event"]' class="space-y-4">
       <div>
-        <input type="password" id="passcodeInput" class="w-full text-center tracking-widest text-xl px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition" placeholder="••••••••" required autofocus>
+        <!--
+          inputmode="none" is the standard way to keep an <input> fully
+          focusable/editable (cursor, physical keyboard, programmatic
+          .value writes from the numpad below) while telling mobile
+          browsers not to pop the on-screen keyboard for it — see
+          toggleNumpadKeyboardMode() in app.js for the escape hatch that
+          flips this back to a real keyboard for passcodes with letters.
+        -->
+        <input type="password" id="passcodeInput" inputmode="none" autocomplete="off" class="w-full text-center tracking-widest text-xl px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition" placeholder="••••••••" required autofocus>
       </div>
+
+      <!-- Numpad — big touch targets for mobile/tablet passcode entry.
+           Digit buttons write straight into #passcodeInput via
+           numpadPress(); see toggleNumpadKeyboardMode() for switching
+           to the native keyboard when a passcode has letters/symbols. -->
+      <div class="grid grid-cols-3 gap-2.5" role="group" aria-label="Passcode number pad">
+        <button type="button" data-click="numpadPress" data-click-args='["1"]' class="numpad-btn">1</button>
+        <button type="button" data-click="numpadPress" data-click-args='["2"]' class="numpad-btn">2</button>
+        <button type="button" data-click="numpadPress" data-click-args='["3"]' class="numpad-btn">3</button>
+        <button type="button" data-click="numpadPress" data-click-args='["4"]' class="numpad-btn">4</button>
+        <button type="button" data-click="numpadPress" data-click-args='["5"]' class="numpad-btn">5</button>
+        <button type="button" data-click="numpadPress" data-click-args='["6"]' class="numpad-btn">6</button>
+        <button type="button" data-click="numpadPress" data-click-args='["7"]' class="numpad-btn">7</button>
+        <button type="button" data-click="numpadPress" data-click-args='["8"]' class="numpad-btn">8</button>
+        <button type="button" data-click="numpadPress" data-click-args='["9"]' class="numpad-btn">9</button>
+        <button type="button" id="numpadKeyboardToggle" data-click="toggleNumpadKeyboardMode" class="numpad-btn text-lg" title="Use keyboard for letters/symbols">🔤</button>
+        <button type="button" data-click="numpadPress" data-click-args='["0"]' class="numpad-btn">0</button>
+        <button type="button" data-click="numpadBackspace" class="numpad-btn text-lg" title="Backspace" aria-label="Backspace">⌫</button>
+      </div>
+
       <button type="submit" id="authSubmitBtn" class="w-full py-3 bg-amber-500 hover:bg-amber-600 text-slate-900 font-bold rounded-xl transition shadow-lg shadow-amber-500/20">
         Unlock App
       </button>
