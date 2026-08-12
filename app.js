@@ -15,7 +15,7 @@ const DB_VERSION = 4;
 // and do NOT sync automatically — bump both together by hand on every
 // deploy. See the matching comment above CACHE_NAME in sw.js.
 // ---------------------------------------------------------------------
-const APP_VERSION = '1.9.6';
+const APP_VERSION = '1.9.7';
 const APP_VERSION_DATE = '2026-08-12';
 
 // Populate the badge as soon as this script runs — deliberately not inside
@@ -198,7 +198,6 @@ class FleetApp {
         document.getElementById('authSubmitBtn').textContent = 'Set Passcode & Initialize';
       }
       document.getElementById('lockScreen').classList.remove('hidden');
-      this.applyLockoutUI();
     };
 
     bioReq.onsuccess = () => {
@@ -222,95 +221,14 @@ class FleetApp {
     };
   }
 
-  // ==================== PASSCODE ATTEMPT LOCKOUT ====================
-  // Slows down repeated wrong-passcode guesses made through this UI by
-  // introducing a growing delay after LOCKOUT_THRESHOLD consecutive
-  // failures. State lives in IndexedDB config store under 'authLockout'
-  // so it survives a page reload (otherwise reloading would silently
-  // reset the counter). This is a UI-level speed bump only — anyone who
-  // has copied the raw IndexedDB files can just edit or delete this
-  // record, or brute-force the PBKDF2-derived key entirely outside the
-  // app, so it does not defend against offline/local file extraction.
-  static LOCKOUT_THRESHOLD = 5;
-  static LOCKOUT_BASE_MS = 5000;
-  static LOCKOUT_MAX_MS = 5 * 60 * 1000;
-
   // Minimum passcode length enforced only when CREATING a passcode
   // (handleAuthSubmit's !this.isSetup branch). Deliberately NOT enforced
   // via an HTML minlength attribute on #passcodeInput, because that same
   // input is reused for unlocking — an HTML-level minlength would block
   // existing users whose passcode predates this check from ever unlocking
-  // again. The offline-brute-force risk this mitigates is documented
-  // above LOCKOUT_THRESHOLD: the in-UI lockout only slows guesses made
-  // through this form, so passcode strength is the real defense against
-  // someone who has copied the raw IndexedDB files.
+  // again. Passcode strength is the primary defense against someone who
+  // has copied the raw IndexedDB files.
   static MIN_PASSCODE_LENGTH = 6;
-
-  async getAuthLockout() {
-    const tx = this.db.transaction('config', 'readonly');
-    const req = tx.objectStore('config').get('authLockout');
-    return new Promise((resolve) => {
-      req.onsuccess = () => resolve(req.result || { key: 'authLockout', failCount: 0, lockedUntil: 0 });
-      req.onerror = () => resolve({ key: 'authLockout', failCount: 0, lockedUntil: 0 });
-    });
-  }
-
-  async setAuthLockout(record) {
-    const tx = this.db.transaction('config', 'readwrite');
-    tx.objectStore('config').put(record);
-    return new Promise((r, j) => { tx.oncomplete = r; tx.onerror = j; });
-  }
-
-  async recordFailedAttempt() {
-    const record = await this.getAuthLockout();
-    record.failCount = (record.failCount || 0) + 1;
-    if (record.failCount >= FleetApp.LOCKOUT_THRESHOLD) {
-      const overBy = record.failCount - FleetApp.LOCKOUT_THRESHOLD;
-      const delay = Math.min(FleetApp.LOCKOUT_BASE_MS * Math.pow(2, overBy), FleetApp.LOCKOUT_MAX_MS);
-      record.lockedUntil = Date.now() + delay;
-    }
-    await this.setAuthLockout(record);
-    this.applyLockoutUI();
-  }
-
-  async clearAuthLockout() {
-    await this.setAuthLockout({ key: 'authLockout', failCount: 0, lockedUntil: 0 });
-    this.applyLockoutUI();
-  }
-
-  async applyLockoutUI() {
-    if (this._lockoutInterval) { clearInterval(this._lockoutInterval); this._lockoutInterval = null; }
-    const record = await this.getAuthLockout();
-    const msg = document.getElementById('authLockoutMsg');
-    const btn = document.getElementById('authSubmitBtn');
-    const input = document.getElementById('passcodeInput');
-    if (!msg || !btn || !input) return;
-
-    const tick = () => {
-      const remaining = record.lockedUntil - Date.now();
-      if (remaining <= 0) {
-        msg.classList.add('hidden');
-        btn.disabled = false;
-        input.disabled = false;
-        if (this._lockoutInterval) { clearInterval(this._lockoutInterval); this._lockoutInterval = null; }
-        return;
-      }
-      const secs = Math.ceil(remaining / 1000);
-      msg.textContent = `Too many attempts. Try again in ${secs}s.`;
-      msg.classList.remove('hidden');
-      btn.disabled = true;
-      input.disabled = true;
-    };
-
-    if (record.lockedUntil && record.lockedUntil > Date.now()) {
-      tick();
-      this._lockoutInterval = setInterval(tick, 1000);
-    } else {
-      msg.classList.add('hidden');
-      btn.disabled = false;
-      input.disabled = false;
-    }
-  }
 
   isBiometricPlatformSupported() {
     return !!(window.PublicKeyCredential && navigator.credentials && window.isSecureContext);
@@ -533,7 +451,6 @@ class FleetApp {
       if (verified.check !== 'FLEETLOG_VALID') throw new Error('Key mismatch');
 
       this.cryptoKey = cryptoKey;
-      await this.clearAuthLockout();
       this.unlockApp();
     } catch (err) {
       this.toast('Biometric unlock failed: ' + err.message, 'error');
@@ -545,12 +462,6 @@ class FleetApp {
     const input = document.getElementById('passcodeInput');
     const passcode = input.value;
     if (!passcode) return;
-
-    const lockout = await this.getAuthLockout();
-    if (lockout.lockedUntil && lockout.lockedUntil > Date.now()) {
-      this.applyLockoutUI();
-      return;
-    }
 
     try {
       if (!this.isSetup) {
@@ -572,7 +483,6 @@ class FleetApp {
         });
         await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = j; });
         this.isSetup = true;
-        await this.clearAuthLockout();
         this.unlockApp();
       } else {
         this.cryptoKey = await CryptoEngine.deriveKey(passcode, this.salt, this.iterations);
@@ -583,7 +493,6 @@ class FleetApp {
         try {
           const verified = await CryptoEngine.decrypt(authRecord.verifier, this.cryptoKey);
           if (verified.check === "FLEETLOG_VALID") {
-            await this.clearAuthLockout();
             this.unlockApp();
             // Fire-and-forget: bring pre-v1.9.6 installs up to the current
             // PBKDF2 iteration count transparently. Never awaited here —
@@ -594,7 +503,6 @@ class FleetApp {
             throw new Error();
           }
         } catch (err) {
-          await this.recordFailedAttempt();
           alert('Incorrect Passcode');
           input.value = '';
         }
