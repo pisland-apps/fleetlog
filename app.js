@@ -797,7 +797,7 @@ class FleetApp {
         ? `<span class="absolute -top-2 -right-2 px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wide bg-blue-600 text-white shadow-sm border border-white rotate-6 select-none">Duty Paid</span>`
         : '';
       return `
-        <button data-click="selectVehicle" data-click-args='[${v.id}]' data-mouseenter="showVehicleTooltip" data-mouseenter-args='["@event", ${v.id}]' data-mouseleave="hideVehicleTooltip"
+        <button data-click="selectVehicle" data-click-args='[${v.id}]' data-mouseenter="showVehicleTooltip" data-mouseenter-args='["@this", ${v.id}]' data-mouseleave="hideVehicleTooltip"
           class="relative flex-shrink-0 snap-start px-4 py-3 rounded-xl border-2 transition-all text-left ${isActive
             ? 'border-amber-500 bg-amber-50 text-slate-900 shadow-md'
             : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:shadow-sm'}">
@@ -809,7 +809,7 @@ class FleetApp {
     }).join('');
   }
 
-  showVehicleTooltip(evt, vehicleId) {
+  showVehicleTooltip(card, vehicleId) {
     const v = this.vehicles.find(x => x.id === vehicleId);
     if (!v) return;
 
@@ -846,7 +846,7 @@ class FleetApp {
     tip.innerHTML = lines.join('');
     tip.classList.remove('hidden');
 
-    const rect = evt.currentTarget.getBoundingClientRect();
+    const rect = card.getBoundingClientRect();
     const tipRect = tip.getBoundingClientRect();
     let top = rect.bottom + 8;
     let left = rect.left;
