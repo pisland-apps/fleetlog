@@ -15,7 +15,7 @@ const DB_VERSION = 4;
 // and do NOT sync automatically — bump both together by hand on every
 // deploy. See the matching comment above CACHE_NAME in sw.js.
 // ---------------------------------------------------------------------
-const APP_VERSION = '1.9.9';
+const APP_VERSION = '1.9.10';
 const APP_VERSION_DATE = '2026-08-14';
 
 // Populate the badge as soon as this script runs — deliberately not inside
@@ -823,6 +823,15 @@ class FleetApp {
           lines.push(`<div class="flex justify-between gap-3 text-slate-200"><span>${this.escape(itemText || 'Item')}:</span><span class="font-medium text-white">${this.cur()}${this.fmt(item.amount || 0)}</span></div>`);
         }
       });
+    } else if (v.initialValue) {
+      // Vehicles imported from an older backup (or added before the
+      // breakdown feature existed) can have a plain initialValue total
+      // with no initialValueBreakdown rows at all. Previously that meant
+      // this whole section — and the tooltip entirely, if there were also
+      // no notes — just silently didn't show. Fall back to a single-line
+      // total so hovering the car still tells you something.
+      lines.push('<div class="font-semibold text-amber-300 mb-1">Initial Value</div>');
+      lines.push(`<div class="flex justify-between gap-3 text-slate-200"><span>Total:</span><span class="font-medium text-white">${this.cur()}${this.fmt(v.initialValue)}</span></div>`);
     }
     if (v.notes) {
       if (lines.length) lines.push('<div class="border-t border-slate-600 my-1.5"></div>');

@@ -195,6 +195,9 @@ This mirrors the attachment viewer in the companion Wealth Planner app.
 
 ## 📝 Changelog
 
+### v1.9.10 — Vehicle Card Tooltip Fallback
+- 🐛 **Fixed the vehicle-card hover tooltip silently disappearing for vehicles with no breakdown rows.** The "Initial Value Breakdown" tooltip section only ever rendered from `v.initialValueBreakdown` — a vehicle with a plain `initialValue` total but no breakdown rows (common for vehicles added before the breakdown feature existed, or imported from an older backup) got no tooltip section at all, and if it also had no Notes, no tooltip showed on hover whatsoever. `showVehicleTooltip()` now falls back to a single "Initial Value: Total" line whenever there's no breakdown array but `initialValue` is set, so hovering always shows something when there's data to show.
+
 ### v1.9.9 — Service Worker Navigation Fix & pdf.js Hardening
 - 🔒 **Fixed a Cloudflare Pages navigation bug (`net::ERR_FAILED`).**
   `sw.js` used to precache `./index.html` directly and had no special
