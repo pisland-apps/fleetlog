@@ -195,6 +195,32 @@ This mirrors the attachment viewer in the companion Wealth Planner app.
 
 ## 📝 Changelog
 
+### v1.9.9 — Service Worker Navigation Fix & pdf.js Hardening
+- 🔒 **Fixed a Cloudflare Pages navigation bug (`net::ERR_FAILED`).**
+  `sw.js` used to precache `./index.html` directly and had no special
+  handling for page-navigation requests. Cloudflare Pages
+  301/308-redirects `/index.html` → `/` by default; `cache.addAll()`
+  silently followed that redirect during install and cached the
+  resulting `Response` — with `redirected: true` baked in — under the
+  `./index.html` key. Chrome refuses to let a service worker answer a
+  *navigation* request with a redirected `Response`, so any later visit
+  to `/index.html` (an old bookmark, a shared link, browser autocomplete)
+  failed outright. `./index.html` is no longer precached, and the fetch
+  handler now has a dedicated `mode === 'navigate'` branch that always
+  resolves through the canonical `./` cache entry regardless of the
+  exact path requested — the same fix already shipped in the companion
+  Wealth Planner / Family Health & Shield / Border Day Ledger apps.
+  `manifest.json`'s `start_url` (`"."`) was never affected by this bug
+  directly, but any other route into `/index.html` on a host like
+  Cloudflare Pages was.
+- 🔒 **pdf.js `getDocument()` now passes `isEvalSupported: false`.**
+  Defense-in-depth, not a fix for a live issue — pdfjs-dist 6.2.108
+  (vendored since v1.9.4) is already patched against CVE-2024-4367 — but
+  explicitly disabling eval-based fast paths costs nothing measurable
+  and means a future downgrade or upstream regression can't silently
+  reopen that class of bug. Matches the same hardening already present
+  in the companion Wealth Planner app.
+
 ### v1.9.6 — Passcode Hardening & Attachment-Type Enforcement
 - 🔒 **PBKDF2 iterations raised 100k → 600k**, in line with current OWASP
   guidance. Existing installs are upgraded automatically and

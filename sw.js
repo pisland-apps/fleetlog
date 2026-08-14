@@ -9,16 +9,18 @@
 // — bump both together by hand on every deploy. See the matching comment
 // above APP_VERSION near the top of app.js.
 // ---------------------------------------------------------------------
-const CACHE_NAME = 'fleetlog-pwa-v1.9.8';
+const CACHE_NAME = 'fleetlog-pwa-v1.9.9';
 
 // As of v1.9.3 every asset (Tailwind, pdf.js + worker, Inter webfont) is
 // vendored locally under ./vendor and ./fonts instead of being fetched
 // from cdn.jsdelivr.net / cdnjs.cloudflare.com / fonts.googleapis.com /
 // fonts.gstatic.com at runtime — so there's no separate CDN_ASSETS list
 // to keep in sync anymore. It's all same-origin and lives in STATIC_ASSETS.
+//
+// As of v1.9.9, './index.html' is deliberately NOT in this list — see the
+// note above the fetch handler's navigate-mode branch below for why.
 const STATIC_ASSETS = [
   './',
-  './index.html',
   './app.js',
   './pdf-worker-init.js',
   './styles.css',
@@ -82,6 +84,39 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   // Ignore non-GET requests or browser extension schemes
   if (event.request.method !== 'GET' || !event.request.url.startsWith('http')) {
+    return;
+  }
+
+  // Navigations (address-bar loads, links, bookmarks, an installed shortcut
+  // relaunching) always resolve through the canonical './' cache entry,
+  // regardless of the exact path requested (e.g. '/index.html'). This is
+  // required on hosts like Cloudflare Pages, which 301/308-redirect
+  // '/index.html' -> '/' by default: if './index.html' were precached (or
+  // ever fetched) directly, that fetch would silently follow the redirect
+  // and the resulting Response — with `redirected: true` baked in — would
+  // get cached under the './index.html' key. Chrome refuses to let a
+  // service worker answer a *navigation* request with a redirected
+  // Response, and fails the whole load with net::ERR_FAILED. Routing every
+  // navigation through './' instead sidesteps this entirely, and also
+  // means an old '/index.html' bookmark or shared link still resolves to
+  // a working page instead of a dead cache slot.
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      caches.open(CACHE_NAME).then((cache) => {
+        return cache.match('./').then((cachedResponse) => {
+          const fetchPromise = fetch('./').then((networkResponse) => {
+            if (networkResponse && networkResponse.ok) {
+              cache.put('./', networkResponse.clone());
+            }
+            return networkResponse;
+          }).catch(() => {
+            // Silent catch for offline status
+          });
+
+          return cachedResponse || fetchPromise;
+        });
+      })
+    );
     return;
   }
 

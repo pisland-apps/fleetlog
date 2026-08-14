@@ -15,8 +15,8 @@ const DB_VERSION = 4;
 // and do NOT sync automatically — bump both together by hand on every
 // deploy. See the matching comment above CACHE_NAME in sw.js.
 // ---------------------------------------------------------------------
-const APP_VERSION = '1.9.8';
-const APP_VERSION_DATE = '2026-08-13';
+const APP_VERSION = '1.9.9';
+const APP_VERSION_DATE = '2026-08-14';
 
 // Populate the badge as soon as this script runs — deliberately not inside
 // the DOMContentLoaded handler further down, so it appears immediately and
@@ -1432,7 +1432,12 @@ class FleetApp {
       } else if (isPdf) {
         if (!window.pdfjsLib) throw new Error('PDF viewer failed to load');
         const bytes = new Uint8Array(await blob.arrayBuffer());
-        const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
+        // isEvalSupported: false is defense-in-depth, not a fix for a live
+        // issue — pdfjs-dist 6.2.108 (vendored here) is already patched
+        // against CVE-2024-4367. Explicitly disabling eval-based fast
+        // paths costs nothing measurable and means a future downgrade or
+        // upstream regression can't silently reopen that class of bug.
+        const pdf = await pdfjsLib.getDocument({ data: bytes, isEvalSupported: false }).promise;
         content.innerHTML = '';
         const containerWidth = content.clientWidth || 700;
         for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
