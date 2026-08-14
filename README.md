@@ -195,6 +195,9 @@ This mirrors the attachment viewer in the companion Wealth Planner app.
 
 ## 📝 Changelog
 
+### v1.9.11 — Initial Value Breakdown Now Shown in Vehicle Details
+- ✨ **Selecting a vehicle card now shows its Initial Value Breakdown directly in the Vehicle Details card**, not just in the edit-vehicle form and the print report. Previously the only on-screen place this data appeared was the hover tooltip on the vehicle-selector card — which doesn't work on touch devices, since there's no true "hover" on a phone or tablet. Clicking a vehicle card (which already selects it and re-renders the dashboard) now always surfaces the breakdown rows and total underneath Year/Notes, whether you're on desktop or mobile. Falls back to a single Initial Value total for vehicles with no breakdown rows saved, same as the v1.9.10 tooltip fix.
+
 ### v1.9.10 — Vehicle Card Tooltip Fallback
 - 🐛 **Fixed the vehicle-card hover tooltip silently disappearing for vehicles with no breakdown rows.** The "Initial Value Breakdown" tooltip section only ever rendered from `v.initialValueBreakdown` — a vehicle with a plain `initialValue` total but no breakdown rows (common for vehicles added before the breakdown feature existed, or imported from an older backup) got no tooltip section at all, and if it also had no Notes, no tooltip showed on hover whatsoever. `showVehicleTooltip()` now falls back to a single "Initial Value: Total" line whenever there's no breakdown array but `initialValue` is set, so hovering always shows something when there's data to show.
 

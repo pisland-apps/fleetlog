@@ -15,7 +15,7 @@ const DB_VERSION = 4;
 // and do NOT sync automatically — bump both together by hand on every
 // deploy. See the matching comment above CACHE_NAME in sw.js.
 // ---------------------------------------------------------------------
-const APP_VERSION = '1.9.10';
+const APP_VERSION = '1.9.11';
 const APP_VERSION_DATE = '2026-08-14';
 
 // Populate the badge as soon as this script runs — deliberately not inside
@@ -1050,6 +1050,56 @@ class FleetApp {
     }).join('');
   }
 
+  // Renders the Initial Value Breakdown as an on-screen table inside the
+  // Vehicle Details card, shown whenever the currently-selected vehicle has
+  // breakdown rows (or, failing that, a plain initialValue total — see the
+  // v1.9.10 tooltip fallback for why that fallback exists). Previously this
+  // breakdown only ever appeared in two places: the edit-vehicle form, and
+  // the print report (#printInitialValueTable, print-only). Neither is
+  // visible on the dashboard itself, so selecting a vehicle didn't surface
+  // it at all unless you happened to hover the vehicle-selector card long
+  // enough to trigger showVehicleTooltip() — which doesn't work on touch
+  // devices in the first place. This puts the same data directly in the
+  // Vehicle Details card so clicking (or hovering, on desktop) a vehicle
+  // card shows it either way.
+  renderInitialValueBreakdownBlock(v) {
+    const rows = (v.initialValueBreakdown && v.initialValueBreakdown.length > 0)
+      ? v.initialValueBreakdown.filter(item => item.label || item.amount || item.date)
+      : [];
+
+    if (rows.length === 0 && !v.initialValue) return '';
+
+    const rowsHtml = rows.length > 0
+      ? rows.map(item => `
+          <div class="flex items-start justify-between gap-3 py-0.5">
+            <div class="min-w-0">
+              <div class="text-gray-600 truncate">${this.escape(item.label || 'Item')}</div>
+              ${item.date ? `<div class="text-[11px] text-gray-400">${this.formatDisplayDate(item.date)}</div>` : ''}
+            </div>
+            <div class="font-mono text-slate-700 whitespace-nowrap">${this.cur()}${this.fmt(item.amount || 0)}</div>
+          </div>
+        `).join('')
+      : `<div class="flex items-center justify-between py-0.5">
+          <div class="text-gray-600">Initial Value</div>
+          <div class="font-mono text-slate-700 whitespace-nowrap">${this.cur()}${this.fmt(v.initialValue)}</div>
+        </div>`;
+
+    const total = rows.length > 0
+      ? rows.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0)
+      : (parseFloat(v.initialValue) || 0);
+
+    return `
+      <div class="mt-2 pt-2 border-t border-gray-100">
+        <div class="font-medium text-slate-700 mb-1">Initial Value Breakdown</div>
+        ${rowsHtml}
+        <div class="flex items-center justify-between pt-1 mt-1 border-t border-gray-100 font-semibold text-slate-800">
+          <div>Total</div>
+          <div class="font-mono">${this.cur()}${this.fmt(total)}</div>
+        </div>
+      </div>
+    `;
+  }
+
   renderVehicleInfo() {
     const v = this.vehicles.find(x => x.id === this.currentVehicleId);
     const el = document.getElementById('vehicleDetailContent');
@@ -1064,6 +1114,7 @@ class FleetApp {
     footer.classList.remove('hidden');
     el.innerHTML = `
       <p><span class="font-medium text-slate-700">Year:</span> ${this.escape(v.year) || '—'}</p>
+      ${this.renderInitialValueBreakdownBlock(v)}
       ${v.notes ? `<div class="mt-1"><span class="font-medium text-slate-700">Notes:</span><div class="mt-1 space-y-0.5 text-gray-600">${v.notes.split('\n').map(line => line.trim() ? `<p class="leading-relaxed">${this.escape(line)}</p>` : '').join('')}</div></div>` : ''}
     `;
     attachmentsBar.innerHTML = (v.attachments && v.attachments.length)
