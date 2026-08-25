@@ -195,6 +195,9 @@ This mirrors the attachment viewer in the companion Wealth Planner app.
 
 ## 📝 Changelog
 
+### v1.9.12 — Vehicle Card Tooltip No Longer Gets Stuck Open on Mobile
+- 🐛 **Fixed the vehicle-card tooltip staying open with no way to dismiss it on touch devices.** Tapping a vehicle card fires a synthetic `mouseenter` (which shows the tooltip) but touch devices never fire a real `mouseleave`, so the tooltip — which is `pointer-events: none` and so can't carry its own close button — stayed on screen indefinitely. Tapping anywhere else in the app, or scrolling, now closes it. (The v1.9.11 change already surfaces the same breakdown permanently in the Vehicle Details card, so the tooltip itself is now more of a quick-glance extra than the only place to see this data — but it should still behave correctly when it does show.)
+
 ### v1.9.11 — Initial Value Breakdown Now Shown in Vehicle Details
 - ✨ **Selecting a vehicle card now shows its Initial Value Breakdown directly in the Vehicle Details card**, not just in the edit-vehicle form and the print report. Previously the only on-screen place this data appeared was the hover tooltip on the vehicle-selector card — which doesn't work on touch devices, since there's no true "hover" on a phone or tablet. Clicking a vehicle card (which already selects it and re-renders the dashboard) now always surfaces the breakdown rows and total underneath Year/Notes, whether you're on desktop or mobile. Falls back to a single Initial Value total for vehicles with no breakdown rows saved, same as the v1.9.10 tooltip fix.
 

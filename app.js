@@ -15,8 +15,8 @@ const DB_VERSION = 4;
 // and do NOT sync automatically — bump both together by hand on every
 // deploy. See the matching comment above CACHE_NAME in sw.js.
 // ---------------------------------------------------------------------
-const APP_VERSION = '1.9.11';
-const APP_VERSION_DATE = '2026-08-14';
+const APP_VERSION = '1.9.12';
+const APP_VERSION_DATE = '2026-08-25';
 
 // Populate the badge as soon as this script runs — deliberately not inside
 // the DOMContentLoaded handler further down, so it appears immediately and
@@ -2239,4 +2239,25 @@ if ('serviceWorker' in navigator) {
   // capture phase, so delegate by listening during capture.
   bind('mouseenter', 'mouseenter', true);
   bind('mouseleave', 'mouseleave', true);
+
+  // Touch devices have no real mouseleave: tapping a vehicle card fires a
+  // synthetic mouseenter (via showVehicleTooltip) but nothing ever fires
+  // mouseleave, so the tooltip stayed open with no way to dismiss it. Since
+  // #vehicleTooltip is pointer-events:none, it can't carry its own close
+  // button either. Fix: close it on the next tap/scroll anywhere that
+  // isn't the card that's currently showing it (tapping that same card, or
+  // a different card, just re-triggers showVehicleTooltip via mouseenter
+  // first, so this only needs to handle "tapped away").
+  document.addEventListener('click', function (evt) {
+    const tip = document.getElementById('vehicleTooltip');
+    if (!tip || tip.classList.contains('hidden')) return;
+    if (evt.target.closest && evt.target.closest('[data-mouseenter="showVehicleTooltip"]')) return;
+    if (app && typeof app.hideVehicleTooltip === 'function') app.hideVehicleTooltip();
+  }, true);
+  document.addEventListener('scroll', function () {
+    const tip = document.getElementById('vehicleTooltip');
+    if (tip && !tip.classList.contains('hidden') && app && typeof app.hideVehicleTooltip === 'function') {
+      app.hideVehicleTooltip();
+    }
+  }, true);
 })();
