@@ -181,6 +181,7 @@
         </label>
         <button data-click="showAddVehicle" class="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-900 font-semibold rounded-lg transition">＋ Add Vehicle</button>
         <button id="biometricToggleBtn" data-click="toggleBiometric" class="hidden px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition" title="Enable Fingerprint / Face ID Unlock">👆</button>
+        <button data-click="showChangePasscodeModal" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition" title="Change Passcode">🔑</button>
         <button data-click="lockApp" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition text-amber-400" title="Lock App">🔒</button>
       </div>
     </div>
@@ -545,6 +546,35 @@
         <button id="confirmBtn" class="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition">Delete</button>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- Change Passcode Modal -->
+<div id="changePasscodeModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50 backdrop-blur-sm no-print">
+  <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden modal-enter">
+    <div class="px-6 py-4 border-b border-gray-200 bg-slate-50 flex items-center justify-between">
+      <h3 class="text-lg font-semibold text-slate-800">Change Passcode</h3>
+      <button data-click="closeModal" data-click-args='["changePasscodeModal"]' class="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+    </div>
+    <form data-submit="submitChangePasscode" data-submit-args='["@event"]' class="p-6 space-y-3">
+      <p class="text-sm text-gray-500">All your data is re-encrypted with the new passcode — this can take a moment for large data sets. Fingerprint/Face ID unlock, if enabled, will need to be re-enabled afterward.</p>
+      <div>
+        <label class="block text-xs font-medium text-gray-500 mb-1" for="currentPasscodeInput">Current Passcode</label>
+        <input type="password" id="currentPasscodeInput" autocomplete="off" class="w-full text-center tracking-widest text-lg px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition" placeholder="••••••••" required>
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-gray-500 mb-1" for="newPasscodeInput">New Passcode</label>
+        <input type="password" id="newPasscodeInput" autocomplete="off" class="w-full text-center tracking-widest text-lg px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition" placeholder="••••••••" required>
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-gray-500 mb-1" for="confirmPasscodeInput">Confirm New Passcode</label>
+        <input type="password" id="confirmPasscodeInput" autocomplete="off" class="w-full text-center tracking-widest text-lg px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition" placeholder="••••••••" required>
+      </div>
+      <div class="flex gap-3 pt-1">
+        <button type="button" data-click="closeModal" data-click-args='["changePasscodeModal"]' class="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition">Cancel</button>
+        <button type="submit" class="flex-1 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-900 font-semibold rounded-lg transition">Change Passcode</button>
+      </div>
+    </form>
   </div>
 </div>
 

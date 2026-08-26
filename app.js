@@ -15,7 +15,7 @@ const DB_VERSION = 4;
 // and do NOT sync automatically — bump both together by hand on every
 // deploy. See the matching comment above CACHE_NAME in sw.js.
 // ---------------------------------------------------------------------
-const APP_VERSION = '1.9.14';
+const APP_VERSION = '1.9.15';
 const APP_VERSION_DATE = '2026-08-26';
 
 // Populate the badge as soon as this script runs — deliberately not inside
@@ -574,67 +574,153 @@ class FleetApp {
     try {
       const newSalt = crypto.getRandomValues(new Uint8Array(16));
       const newKey = await CryptoEngine.deriveKey(passcode, newSalt, CryptoEngine.CURRENT_ITERATIONS);
-
-      // Re-encrypt every record under the new key. Read raw (not through
-      // loadVehicles/loadEntries, which only pull the currently-selected
-      // vehicle's entries) so records for every vehicle are covered.
-      const readTx = this.db.transaction(['vehicles', 'entries'], 'readonly');
-      const vehiclesRaw = await new Promise((r, j) => {
-        const q = readTx.objectStore('vehicles').getAll();
-        q.onsuccess = () => r(q.result); q.onerror = () => j(q.error);
-      });
-      const entriesRaw = await new Promise((r, j) => {
-        const q = readTx.objectStore('entries').getAll();
-        q.onsuccess = () => r(q.result); q.onerror = () => j(q.error);
-      });
-
-      const newVehicleRows = [];
-      for (const v of vehiclesRaw) {
-        if (!v.payload) continue;
-        const decrypted = await CryptoEngine.decrypt(v.payload, this.cryptoKey);
-        newVehicleRows.push({ id: v.id, payload: await CryptoEngine.encrypt(decrypted, newKey) });
-      }
-      const newEntryRows = [];
-      for (const e of entriesRaw) {
-        if (!e.payload) continue;
-        const decrypted = await CryptoEngine.decrypt(e.payload, this.cryptoKey);
-        newEntryRows.push({ id: e.id, vehicleId: e.vehicleId, payload: await CryptoEngine.encrypt(decrypted, newKey) });
-      }
-      const newVerifier = await CryptoEngine.encrypt({ check: 'FLEETLOG_VALID' }, newKey);
-
-      // Biometric unlock (if enabled) wraps the OLD key's raw bytes — once
-      // this.cryptoKey is replaced below, that wrapped copy decrypts to a
-      // key that no longer matches the new verifier. There's no way to
-      // re-wrap it here without another fingerprint/Face-ID prompt mid-
-      // flow, so it's invalidated instead; the user just re-enables it
-      // from Settings, same UX as the legacy-'wrapped'-record cleanup in
-      // checkAuthStatus().
-      const hadBiometric = !!this.biometricRecord;
-
-      const writeTx = this.db.transaction(['vehicles', 'entries', 'config'], 'readwrite');
-      for (const row of newVehicleRows) writeTx.objectStore('vehicles').put(row);
-      for (const row of newEntryRows) writeTx.objectStore('entries').put(row);
-      writeTx.objectStore('config').put({
-        key: 'auth',
-        salt: Array.from(newSalt),
-        iterations: CryptoEngine.CURRENT_ITERATIONS,
-        verifier: newVerifier
-      });
-      if (hadBiometric) writeTx.objectStore('config').delete('biometric');
-      await new Promise((r, j) => { writeTx.oncomplete = r; writeTx.onerror = () => j(writeTx.error); });
-
-      this.salt = newSalt;
-      this.iterations = CryptoEngine.CURRENT_ITERATIONS;
-      this.cryptoKey = newKey;
-
+      const hadBiometric = await this._reencryptDataStore(newKey, newSalt, CryptoEngine.CURRENT_ITERATIONS);
       if (hadBiometric) {
-        this.biometricRecord = null;
-        this.showBiometricUnlockButton();
-        this.refreshBiometricToggle();
         this.toast('Security upgrade complete. Fingerprint/Face ID unlock was reset — please re-enable it from Settings.', 'error');
       }
     } catch (err) {
       console.error('PBKDF2 iteration upgrade failed (will retry on next unlock):', err);
+    }
+  }
+
+  // Re-encrypts every vehicle/entry record plus the 'auth' config record
+  // (salt/iterations/verifier) under newKey/newSalt/newIterations, then
+  // swaps this.cryptoKey/salt/iterations over on success. This is the
+  // shared core of two flows that both need to atomically-ish replace the
+  // AES-GCM key protecting every encrypted record: the silent PBKDF2
+  // hardening above, and the user-initiated changePasscode flow below —
+  // get this wrong and the app can't decrypt its own data on next load.
+  //
+  // Any existing biometric unlock record wraps the OLD key's raw bytes,
+  // so it's invalidated (deleted) here rather than re-wrapped — doing
+  // that without another fingerprint/Face-ID prompt mid-flow isn't
+  // possible. Returns true if a biometric record was invalidated, so
+  // callers can surface the right toast/message.
+  async _reencryptDataStore(newKey, newSalt, newIterations) {
+    const readTx = this.db.transaction(['vehicles', 'entries'], 'readonly');
+    const vehiclesRaw = await new Promise((r, j) => {
+      const q = readTx.objectStore('vehicles').getAll();
+      q.onsuccess = () => r(q.result); q.onerror = () => j(q.error);
+    });
+    const entriesRaw = await new Promise((r, j) => {
+      const q = readTx.objectStore('entries').getAll();
+      q.onsuccess = () => r(q.result); q.onerror = () => j(q.error);
+    });
+
+    const newVehicleRows = [];
+    for (const v of vehiclesRaw) {
+      if (!v.payload) continue;
+      const decrypted = await CryptoEngine.decrypt(v.payload, this.cryptoKey);
+      newVehicleRows.push({ id: v.id, payload: await CryptoEngine.encrypt(decrypted, newKey) });
+    }
+    const newEntryRows = [];
+    for (const e of entriesRaw) {
+      if (!e.payload) continue;
+      const decrypted = await CryptoEngine.decrypt(e.payload, this.cryptoKey);
+      newEntryRows.push({ id: e.id, vehicleId: e.vehicleId, payload: await CryptoEngine.encrypt(decrypted, newKey) });
+    }
+    const newVerifier = await CryptoEngine.encrypt({ check: 'FLEETLOG_VALID' }, newKey);
+
+    const hadBiometric = !!this.biometricRecord;
+
+    const writeTx = this.db.transaction(['vehicles', 'entries', 'config'], 'readwrite');
+    for (const row of newVehicleRows) writeTx.objectStore('vehicles').put(row);
+    for (const row of newEntryRows) writeTx.objectStore('entries').put(row);
+    writeTx.objectStore('config').put({
+      key: 'auth',
+      salt: Array.from(newSalt),
+      iterations: newIterations,
+      verifier: newVerifier
+    });
+    if (hadBiometric) writeTx.objectStore('config').delete('biometric');
+    await new Promise((r, j) => { writeTx.oncomplete = r; writeTx.onerror = () => j(writeTx.error); });
+
+    this.salt = newSalt;
+    this.iterations = newIterations;
+    this.cryptoKey = newKey;
+
+    if (hadBiometric) {
+      this.biometricRecord = null;
+      this.showBiometricUnlockButton();
+      this.refreshBiometricToggle();
+    }
+    return hadBiometric;
+  }
+
+  // ==================== CHANGE PASSCODE (v1.9.15+) ====================
+  showChangePasscodeModal() {
+    const current = document.getElementById('currentPasscodeInput');
+    const next = document.getElementById('newPasscodeInput');
+    const confirm = document.getElementById('confirmPasscodeInput');
+    if (current) current.value = '';
+    if (next) next.value = '';
+    if (confirm) confirm.value = '';
+    this.openModal('changePasscodeModal');
+    if (current) setTimeout(() => current.focus(), 0);
+  }
+
+  async submitChangePasscode(e) {
+    if (e) e.preventDefault();
+    const currentInput = document.getElementById('currentPasscodeInput');
+    const newInput = document.getElementById('newPasscodeInput');
+    const confirmInput = document.getElementById('confirmPasscodeInput');
+    const current = currentInput.value;
+    const next = newInput.value;
+    const confirm = confirmInput.value;
+
+    if (!current || !next || !confirm) {
+      alert('Please fill in all three fields.');
+      return;
+    }
+    if (next.length < FleetApp.MIN_PASSCODE_LENGTH) {
+      alert(`New passcode must be at least ${FleetApp.MIN_PASSCODE_LENGTH} characters.`);
+      return;
+    }
+    if (next !== confirm) {
+      alert('New passcode and confirmation do not match.');
+      confirmInput.value = '';
+      confirmInput.focus();
+      return;
+    }
+
+    // Verify the CURRENT passcode is actually correct before touching any
+    // data — deriving a key from a wrong passcode doesn't throw by itself,
+    // only decrypting the stored verifier with it does. Same check as the
+    // unlock screen (handleAuthSubmit), just against the typed value here
+    // rather than trusting the already-unlocked this.cryptoKey blindly.
+    let verifiedKey;
+    try {
+      verifiedKey = await CryptoEngine.deriveKey(current, this.salt, this.iterations);
+      const tx = this.db.transaction('config', 'readonly');
+      const req = tx.objectStore('config').get('auth');
+      const authRecord = await new Promise((r, j) => { req.onsuccess = () => r(req.result); req.onerror = j; });
+      const verified = await CryptoEngine.decrypt(authRecord.verifier, verifiedKey);
+      if (verified.check !== 'FLEETLOG_VALID') throw new Error('bad verifier');
+    } catch (err) {
+      alert('Current passcode is incorrect.');
+      currentInput.value = '';
+      currentInput.focus();
+      return;
+    }
+    this.cryptoKey = verifiedKey;
+
+    try {
+      const newSalt = crypto.getRandomValues(new Uint8Array(16));
+      const newKey = await CryptoEngine.deriveKey(next, newSalt, CryptoEngine.CURRENT_ITERATIONS);
+      const hadBiometric = await this._reencryptDataStore(newKey, newSalt, CryptoEngine.CURRENT_ITERATIONS);
+
+      currentInput.value = '';
+      newInput.value = '';
+      confirmInput.value = '';
+      this.closeModal('changePasscodeModal');
+
+      if (hadBiometric) {
+        this.toast('Passcode changed. Fingerprint/Face ID unlock was reset — please re-enable it from Settings.', 'error');
+      } else {
+        this.toast('Passcode changed successfully.');
+      }
+    } catch (err) {
+      alert('Failed to change passcode: ' + err.message);
     }
   }
 
@@ -2148,6 +2234,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('bankLoanModal').addEventListener('click', e => { if (e.target === e.currentTarget) app.closeModal('bankLoanModal'); });
   document.getElementById('confirmModal').addEventListener('click', e => { if (e.target === e.currentTarget) app.closeModal('confirmModal'); });
   document.getElementById('attachmentViewerModal').addEventListener('click', e => { if (e.target === e.currentTarget) app.closeModal('attachmentViewerModal'); });
+  document.getElementById('changePasscodeModal').addEventListener('click', e => { if (e.target === e.currentTarget) app.closeModal('changePasscodeModal'); });
   // Backdrop click resolves the pending promptForBackupPasscode() promise
   // with null, same as the Cancel button — not a plain closeModal(), so
   // whatever's awaiting the passcode doesn't hang forever.
@@ -2161,6 +2248,7 @@ document.addEventListener('DOMContentLoaded', () => {
       app.closeModal('bankLoanModal');
       app.closeModal('confirmModal');
       app.closeModal('attachmentViewerModal');
+      app.closeModal('changePasscodeModal');
       app.cancelBackupPasscode();
     }
   });

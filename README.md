@@ -195,6 +195,9 @@ This mirrors the attachment viewer in the companion Wealth Planner app.
 
 ## 📝 Changelog
 
+### v1.9.15 — Change Passcode
+- ✨ **Added a "Change Passcode" option (🔑 button in the header).** Enter your current passcode plus a new one (min. 6 characters, confirmed twice); the current passcode is verified against the stored auth record before anything changes. On success, every vehicle/entry record is re-encrypted under a brand-new key, salt, and the current PBKDF2 iteration count (600k) — the same re-encryption routine already used for the silent PBKDF2 hardening on older installs, now shared between both flows. Fingerprint/Face ID unlock, if enabled, is reset in the process (it wraps the old key) — you'll get a toast prompting you to re-enable it from the header.
+
 ### v1.9.14 — Fixed Spurious "Save Password?" Prompt Introduced by v1.9.13
 - 🐛 **Fixed Chrome offering to save the lock-screen/backup passcode as a password right after unlocking, then acting on it when you next tapped Edit or Add.** v1.9.13's back-button fix pushed a browser history entry on every modal open. Chrome's password manager watches for a history/URL change shortly after a password field was filled as its signal that a single-page app just completed a login — and the first thing most people do after unlocking is tap something that opens a modal, so that pushState was firing the prompt right after every unlock. The back-button behavior itself is unchanged (back still closes the topmost open modal instead of exiting), but it's now implemented with a single history "trap" entry pushed once at boot — well before the lock screen is ever touched — that gets re-armed only when a back press actually closes a modal, instead of a new entry on every open.
 
