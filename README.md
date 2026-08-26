@@ -195,6 +195,9 @@ This mirrors the attachment viewer in the companion Wealth Planner app.
 
 ## 📝 Changelog
 
+### v1.9.16 — Tidied Up the Mobile Header Toolbar Layout
+- 💅 **Rearranged the header's controls on narrow (mobile/tablet) screens.** The row used to wrap freely, leaving mismatched button widths and the fingerprint/passcode/lock icons trailing unevenly onto their own ragged lines. It's now: the print-orientation and currency dropdowns paired in a row, then Print Report/Export JSON, then Import JSON/+ Add Vehicle — each pair filling the width evenly — followed by a dedicated row for the 🔑/🔒/👆 icon buttons that splits evenly across however many of them are actually visible (fingerprint is only shown on supporting devices), so there's never a lopsided gap. Desktop/tablet-landscape layout (sm breakpoint and up) is untouched — same single horizontal row as before.
+
 ### v1.9.15 — Change Passcode
 - ✨ **Added a "Change Passcode" option (🔑 button in the header).** Enter your current passcode plus a new one (min. 6 characters, confirmed twice); the current passcode is verified against the stored auth record before anything changes. On success, every vehicle/entry record is re-encrypted under a brand-new key, salt, and the current PBKDF2 iteration count (600k) — the same re-encryption routine already used for the silent PBKDF2 hardening on older installs, now shared between both flows. Fingerprint/Face ID unlock, if enabled, is reset in the process (it wraps the old key) — you'll get a toast prompting you to re-enable it from the header.
 
