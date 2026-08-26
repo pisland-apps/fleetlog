@@ -195,6 +195,9 @@ This mirrors the attachment viewer in the companion Wealth Planner app.
 
 ## 📝 Changelog
 
+### v1.9.13 — Mobile/Tablet Back Button Now Closes Modals Instead of Exiting the App
+- 🐛 **Fixed the device/gesture back button quitting the installed PWA immediately instead of navigating within it.** As a single-page app with no routes, FleetLog previously had no history entries for the back button to step through, so pressing it on Android/iOS (or a tablet's on-screen back gesture) exited straight back to the home screen — even with a modal open. Every `openModal()` call now pushes a history entry, and a `popstate` listener closes the topmost open modal on back instead. Closing a modal normally (Cancel/×/backdrop tap/Escape) consumes its history entry too, so a later back press doesn't land on a stale "reopen this" state. Nested modals (e.g. the attachment viewer opened from within the vehicle/entry form) close one at a time, back button press per layer — pressing back with nothing open still exits the app as expected.
+
 ### v1.9.12 — Vehicle Card Tooltip No Longer Gets Stuck Open on Mobile
 - 🐛 **Fixed the vehicle-card tooltip staying open with no way to dismiss it on touch devices.** Tapping a vehicle card fires a synthetic `mouseenter` (which shows the tooltip) but touch devices never fire a real `mouseleave`, so the tooltip — which is `pointer-events: none` and so can't carry its own close button — stayed on screen indefinitely. Tapping anywhere else in the app, or scrolling, now closes it. (The v1.9.11 change already surfaces the same breakdown permanently in the Vehicle Details card, so the tooltip itself is now more of a quick-glance extra than the only place to see this data — but it should still behave correctly when it does show.)
 
