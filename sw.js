@@ -9,7 +9,7 @@
 // — bump both together by hand on every deploy. See the matching comment
 // above APP_VERSION near the top of app.js.
 // ---------------------------------------------------------------------
-const CACHE_NAME = 'fleetlog-pwa-v1.9.13';
+const CACHE_NAME = 'fleetlog-pwa-v1.9.14';
 
 // As of v1.9.3 every asset (Tailwind, pdf.js + worker, Inter webfont) is
 // vendored locally under ./vendor and ./fonts instead of being fetched

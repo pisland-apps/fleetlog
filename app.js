@@ -15,7 +15,7 @@ const DB_VERSION = 4;
 // and do NOT sync automatically — bump both together by hand on every
 // deploy. See the matching comment above CACHE_NAME in sw.js.
 // ---------------------------------------------------------------------
-const APP_VERSION = '1.9.13';
+const APP_VERSION = '1.9.14';
 const APP_VERSION_DATE = '2026-08-26';
 
 // Populate the badge as soon as this script runs — deliberately not inside
@@ -139,17 +139,11 @@ class FleetApp {
     this.isSetup = false;
     this.biometricRecord = null;
 
-    // Stack of currently-open modal ids, in open order. Kept in sync with
-    // browser/OS history (see openModal/closeModal + the popstate listener
-    // near DOMContentLoaded) so the mobile/tablet hardware or gesture
-    // "back" button closes the topmost open modal instead of immediately
-    // exiting the installed PWA.
+    // Stack of currently-open modal ids, in open order. Used only to know
+    // which modal to close on a back-button press (see the popstate
+    // listener near DOMContentLoaded) — it does not correspond 1:1 with
+    // browser history entries; see that listener for why.
     this.modalStack = [];
-    // True while we're programmatically consuming a history entry we
-    // pushed (via history.back() inside closeModal), so the popstate
-    // handler that fires a moment later knows to skip re-closing a modal
-    // that a direct openModal/closeModal() call already handled.
-    this._suppressPopstate = false;
   }
 
   async init() {
@@ -2088,17 +2082,10 @@ class FleetApp {
     const el = document.getElementById(id);
     el.classList.remove('hidden');
     el.classList.add('flex');
-
-    // Push a history entry per open modal so the device/gesture back
-    // button pops modals one at a time (via popstate below) instead of
-    // leaving the installed PWA. Nested modals (e.g. the attachment
-    // viewer opened from within the vehicle/entry form) stack correctly
-    // since this is a real stack matched 1:1 with pushed history entries.
     this.modalStack.push(id);
-    history.pushState({ fleetlogModal: id }, '');
   }
 
-  closeModal(id, opts = {}) {
+  closeModal(id) {
     const el = document.getElementById(id);
     el.classList.add('hidden');
     el.classList.remove('flex');
@@ -2108,16 +2095,6 @@ class FleetApp {
 
     const idx = this.modalStack.lastIndexOf(id);
     if (idx !== -1) this.modalStack.splice(idx, 1);
-
-    // If this close was triggered by the user (Cancel/X/backdrop/Escape)
-    // rather than by pressing the back button, consume the history entry
-    // openModal() pushed for it, so a later back press doesn't just land
-    // on a stale "reopen this closed modal" state. history.back() fires
-    // popstate asynchronously, so flag it as self-triggered to skip first.
-    if (!opts.fromPopState && idx !== -1 && history.state && history.state.fleetlogModal === id) {
-      this._suppressPopstate = true;
-      history.back();
-    }
   }
 
   fmt(n, d = 2) {
@@ -2189,19 +2166,27 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Mobile/tablet hardware or gesture back button: close the topmost open
-  // modal instead of immediately exiting the installed PWA. Each openModal()
-  // call pushed a history entry, so a back press here just means "undo the
-  // most recent one" — pop it off our stack and hide it. If closeModal()
-  // itself triggered this (via history.back() to consume its own pushed
-  // entry), _suppressPopstate skips doing it a second time.
+  // modal instead of immediately exiting the installed PWA.
+  //
+  // Deliberately does NOT push a new history.pushState() on every
+  // openModal() call (an earlier version did). Chrome's password manager
+  // watches for a history/URL change happening shortly after a password
+  // field (the lock-screen/backup passcode inputs) was filled, as its
+  // heuristic for "this SPA just completed a login" — and since the very
+  // next thing a user does after unlocking is often tap something that
+  // opens a modal, that per-open pushState was firing a spurious "Save
+  // password?" prompt right after unlock. Instead, a single history entry
+  // ("trap") is pushed once at boot, well before the lock screen is ever
+  // touched. Each back press consumes that entry (firing popstate below);
+  // if a modal was open we close it and push exactly one fresh trap entry
+  // to re-arm for the next back press — otherwise we push nothing and let
+  // the back navigation proceed normally (exits/minimizes the app).
+  history.pushState({ fleetlogTrap: true }, '');
   window.addEventListener('popstate', () => {
-    if (app._suppressPopstate) {
-      app._suppressPopstate = false;
-      return;
-    }
     if (app.modalStack.length > 0) {
       const topId = app.modalStack[app.modalStack.length - 1];
-      app.closeModal(topId, { fromPopState: true });
+      app.closeModal(topId);
+      history.pushState({ fleetlogTrap: true }, '');
     }
   });
 });
