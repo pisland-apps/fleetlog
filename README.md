@@ -19,10 +19,14 @@
 | 🔧 **Maintenance Log** | Record costs, parts, service fees with supplier & odometer tracking |
 | 📉 **Depreciation Tracking** | Auto-calculates current book value against initial value |
 | 🏦 **Bank Loan Ledger** | Dedicated payment history for vehicle financing |
-| 📎 **File Attachments** | Attach receipts, registration cards, or photos (5 MB limit per file) |
+| 📎 **File Attachments** | Any number of receipts, registration cards or photos per vehicle / entry (5 MB per file), opened in an in-app image / PDF viewer |
 | 💱 **Multi-Currency** | Configurable currency symbol (RM, USD, EUR, GBP, JPY, etc.) |
 | 💾 **Import / Export** | Encrypted or plaintext JSON backup/restore |
 | 🖨️ **Print Reports** | Landscape/portrait optimized print styles with breakdown tables |
+| 🔑 **Change Passcode** | Re-encrypts all records under a new key and salt (v1.9.15) |
+| 👆 **Fingerprint / Face ID** | Optional unlock shortcut, only where WebAuthn PRF is supported (v1.9.5) |
+| 🔢 **Lock-screen numpad** | Big on-screen numpad; 🔤 switches to the normal keyboard (v1.9.8) |
+| 🏷️ **Duty status stamp** | Duty Free / Duty Paid badge on a vehicle card (v1.2) |
 
 ---
 
@@ -54,20 +58,23 @@ Then open `http://localhost:8080`.
 
 ```
 fleetlog-pwa/
-├── index.html          # Main application (single-page)
-├── manifest.json       # Web App Manifest for installability
-├── sw.js               # Service Worker (Stale-While-Revalidate)
-├── README.md           # This file
-└── icons/
-    ├── favicon.ico
-    ├── icon-72x72.png
-    ├── icon-96x96.png
-    ├── icon-128x128.png
-    ├── icon-144x144.png
-    ├── icon-152x152.png
-    ├── icon-192x192.png
-    ├── icon-384x384.png
-    └── icon-512x512.png
+├── index.html            # Page markup + CSP <meta> (no inline scripts or handlers)
+├── app.js                # All application logic; APP_VERSION / APP_VERSION_DATE live here
+├── styles.css            # Styles that used to be inline
+├── pdf-worker-init.js    # Loads pdf.js (ES module) and exposes window.pdfjsLib
+├── manifest.json         # Web App Manifest for installability
+├── sw.js                 # Service Worker (Stale-While-Revalidate); CACHE_NAME lives here
+├── _headers              # Optional HTTP headers (Cloudflare Pages / Netlify); ignored on GitHub Pages
+├── README.md             # This file
+├── icons/
+│   ├── favicon.ico
+│   └── icon-72x72.png … icon-512x512.png   (72, 96, 128, 144, 152, 192, 384, 512)
+├── fonts/
+│   ├── inter.css
+│   └── files/            # Inter latin subset, weights 300–800, woff2
+└── vendor/
+    ├── tailwind/tailwind.js
+    └── pdfjs/            # pdf.min.mjs + pdf.worker.min.mjs
 ```
 
 ---
@@ -87,8 +94,9 @@ AES-256-GCM Key ──► Encrypt/Decrypt all IndexedDB records
 - **Salt**, **iteration count**, and **verifier** are stored in IndexedDB `config` store.
 - **Vehicles** and **entries** are stored as encrypted payloads; raw data never touches disk unencrypted.
 - If the passcode is lost, **data cannot be recovered** — there is no backdoor.
-- **Passcode strength:** a minimum of 6 characters is enforced when *creating* a passcode. This isn't enforced retroactively on unlock (an existing shorter passcode still works) — the in-app lockout only slows guesses made through the UI, so passcode strength is what actually protects against someone who has copied the raw IndexedDB files and is brute-forcing offline.
-- **Iteration count upgrades automatically:** installs created before v1.9.6 (100k iterations) are silently upgraded to 600k — re-encrypting all stored records under a freshly derived key — the first time the app is unlocked with the *passcode* (not biometric) on v1.9.6+. If biometric unlock was enabled, it's reset by this upgrade and needs re-enabling once, since it wraps the old key's bytes.
+- **Passcode strength:** a minimum of 6 characters is enforced when *creating* a passcode. This isn't enforced retroactively on unlock (an existing shorter passcode still works). There is **no in-app lockout** (it was added in v1.9.3 and removed in v1.9.7), so passcode strength and the PBKDF2 iteration count are what protect against someone who has copied the raw IndexedDB files and is brute-forcing offline.
+- **Iteration count upgrades automatically:** installs created before v1.9.6 (100k iterations) are silently upgraded to 600k — re-encrypting all stored records under a freshly derived key — the first time the app is unlocked with the *passcode* (not biometric) on v1.9.6+. If biometric unlock was enabled, it's reset by this upgrade and needs re-enabling once, since it wraps the old key's bytes. **Change Passcode** (v1.9.15) does the same re-encryption with a new key and a fresh salt, and resets biometric unlock for the same reason.
+- **Biometric unlock is PRF-only** (v1.9.5): the wrapping key is derived from the authenticator on each unlock and never stored. If the device doesn't support WebAuthn PRF, the passcode stays the only unlock method.
 - **Clickjacking (`frame-ancestors`):** can't be set via the `<meta>` CSP tag in `index.html` — it's an HTTP-header-only directive. See the repo-root `_headers` file, which sets it (plus `X-Frame-Options` etc.) on hosts that honor a `_headers` file (e.g. Cloudflare Pages, Netlify). Plain GitHub Pages ignores that file, so this gap remains open there.
 
 ---
@@ -195,6 +203,11 @@ This mirrors the attachment viewer in the companion Wealth Planner app.
 
 ## 📝 Changelog
 
+### v1.9.17 — Documentation Clean-Up (no behavior change)
+- 📝 **README brought in line with the code.** The file structure now lists `app.js`, `styles.css`, `pdf-worker-init.js`, `_headers`, `vendor/` and `fonts/`; the FAQ no longer says a passcode can't be changed (Change Passcode exists since v1.9.15); the Security section no longer talks about an in-app lockout (removed in v1.9.7); the Features table lists Change Passcode, biometric unlock, the numpad and the duty stamp. Changelog entries that were missing were added: v1.9.8, v1.9.7, v1.9.1 and v1.2 – v1.7 (the v1.2 – v1.7 entries are reconstructed from the version notes of those releases, not from their code).
+- 🧹 Removed a stale comment in `index.html` that pointed at `checkAuthLockout()`, a function that no longer exists.
+- `APP_VERSION` / `APP_VERSION_DATE` and `CACHE_NAME` bumped together, as usual. No change to `app.js` logic, styles, the service worker's file list or stored data.
+
 ### v1.9.16 — Tidied Up the Mobile Header Toolbar Layout
 - 💅 **Rearranged the header's controls on narrow (mobile/tablet) screens.** The row used to wrap freely, leaving mismatched button widths and the fingerprint/passcode/lock icons trailing unevenly onto their own ragged lines. It's now: the print-orientation and currency dropdowns paired in a row, then Print Report/Export JSON, then Import JSON/+ Add Vehicle — each pair filling the width evenly — followed by a dedicated row for the 🔑/🔒/👆 icon buttons that splits evenly across however many of them are actually visible (fingerprint is only shown on supporting devices), so there's never a lopsided gap. Desktop/tablet-landscape layout (sm breakpoint and up) is untouched — same single horizontal row as before.
 
@@ -241,6 +254,12 @@ This mirrors the attachment viewer in the companion Wealth Planner app.
   and means a future downgrade or upstream regression can't silently
   reopen that class of bug. Matches the same hardening already present
   in the companion Wealth Planner app.
+
+### v1.9.8 — Numpad on the Lock Screen
+- ✨ **Big on-screen numpad (1–9, 0, backspace) under the passcode field**, styled for easy tapping. The passcode input uses `inputmode="none"`, so it stays editable (cursor, physical keyboard on desktop, numpad taps) but phones don't open their keyboard. The passcode isn't limited to digits, so a small 🔤 button switches the field back to a normal keyboard; it returns to numpad mode each time the lock screen reappears.
+
+### v1.9.7 — Passcode Lockout Removed
+- 🔒 **Removed the failed-attempt lockout added in v1.9.3** (5 wrong passcodes → growing delay) from `app.js` and `index.html`. A wrong passcode now goes straight to the "Incorrect Passcode" alert. The lockout only ever slowed guesses made through this UI; against a copied database file, passcode strength (`MIN_PASSCODE_LENGTH`) and the PBKDF2 iteration count are what protect the data.
 
 ### v1.9.6 — Passcode Hardening & Attachment-Type Enforcement
 - 🔒 **PBKDF2 iterations raised 100k → 600k**, in line with current OWASP
@@ -336,7 +355,7 @@ This mirrors the attachment viewer in the companion Wealth Planner app.
   vendored under `vendor/` and `fonts/`. CSP tightened to `'self'` only
   (plus `img-src blob:` for the attachment viewer). See "Fully
   Local-Hosted Assets" above.
-- 🔒 **Passcode attempt lockout**: After 5 consecutive wrong passcodes,
+- 🔒 **Passcode attempt lockout** *(removed again in v1.9.7)*: After 5 consecutive wrong passcodes,
   the unlock form imposes a growing delay (5s, 10s, 20s… capped at 5
   minutes) before another attempt is accepted. This only slows down
   attempts made through the app's own UI — it can't stop someone
@@ -345,7 +364,7 @@ This mirrors the attachment viewer in the companion Wealth Planner app.
 - 🔒 **Unencrypted export confirmation**: Downloading a plaintext backup
   now requires explicitly checking an "I understand" box, on top of the
   existing warning banner, before the Download button is enabled.
-- 🔒 **Hardware-backed biometric unlock (where supported)**: Fingerprint/
+- 🔒 **Hardware-backed biometric unlock (where supported)** *(the non-PRF fallback described here was removed in v1.9.5)*: Fingerprint/
   Face ID unlock now uses the WebAuthn PRF extension when the platform
   authenticator supports it — the wrapping key is derived fresh from the
   authenticator on every unlock and is never stored, so a copy of the
@@ -363,6 +382,9 @@ This mirrors the attachment viewer in the companion Wealth Planner app.
 ### v1.9.2
 - 🐛 **Fixed**: "Export failed: Invalid string length" when exporting an encrypted backup with sizeable attachments. Encrypted export data is now base64-encoded instead of written out as a JSON array of one number per byte — the old format could inflate a single ~6 MB attachment's pretty-printed JSON to 60+ MB, which some browsers refuse to build as a single string. Import still reads older backup files exported before this fix.
 
+### v1.9.1
+- 💅 Vehicle attachments now sit in their own full-width row below the five dashboard cards, with file names in smaller (11 px) text. The Vehicle Details card keeps only Year and Notes.
+
 ### v1.9
 - ✅ **Multiple Attachments**: Vehicles and entries can now carry any number of image/PDF/doc attachments instead of just one — tap ➕ Add Attachment to add more, each with its own remove (✕) chip
 - 🐛 **Fixed**: Removing an attachment and saving now actually deletes it. Previously, clicking the ✕ next to an existing attachment reset the upload field but the save logic silently fell back to the old file, so the attachment was never actually removed or replaced.
@@ -371,6 +393,30 @@ This mirrors the attachment viewer in the companion Wealth Planner app.
 - ✅ **In-App Attachment Viewer**: Images and PDFs on vehicles/entries now open in an in-app viewer (pdf.js for PDFs, Blob object URLs for images) instead of downloading straight to disk
 - ✅ **Attachment Thumbnails**: Maintenance entries and Vehicle Details show a small image thumbnail when the attachment is an image; blank when there's no attachment
 - ✅ **Version Badge**: Small corner badge showing `APP_VERSION` from `app.js`, visible even on the lock screen before authentication
+
+### v1.7
+- 🔒 **`escape()` now escapes quotes.** It used a text node, which only escapes `&`, `<`, `>`; six places put its output inside double-quoted attributes, so a `"` typed into a field could break out of the attribute. It now replaces `&`, `<`, `>`, `"` and `'` by hand and is safe in text and attribute context.
+- 🐛 **Fixed the unstyled page caused by a Tailwind SRI mismatch.** The short jsDelivr address resolved to bytes that didn't match the integrity hash, so the browser refused the script. The `<script>` and `CDN_ASSETS` in `sw.js` now point at the exact file (`.../@tailwindcss/browser@4.3.3/dist/index.global.js`); `CACHE_NAME` bumped.
+
+### v1.6 — Security Patch: Escaping & CSP
+- 🔒 `index.html` split into markup + `app.js` + `styles.css`; all 47 inline `on*` handlers replaced by `data-click` etc. and one delegated dispatcher (arguments read with `JSON.parse`, no `eval`).
+- 🔒 Strict CSP in a `<meta>` tag: no `unsafe-inline` / `unsafe-eval` in `script-src`; `base-uri`, `form-action` and `object-src` restricted. Tailwind moved to jsDelivr with a SRI hash.
+- 🔒 Fixed three unescaped fields (`categoryName` badge, `v.year`, initial-value breakdown `date` / `amount`) that a poisoned JSON backup could have used for stored XSS.
+
+### v1.5
+- ✅ The Vehicle Details card shows only Year (name, registration and duty status remain on the vehicle selector card).
+
+### v1.4
+- ✅ Vehicle Details buttons are icon-only (🏦 / ✏️ / 🗑️) in one row of equal width.
+- ✅ **Total Spent** sums only Cost + Part + Service + custom "Other" expenses; Bank Loan instalments are excluded from the total and its breakdown (they remain in the Bank Loan Ledger).
+
+### v1.3
+- 🐛 **Fixed importing an encrypted backup into a different install.** Import never used the salt stored in the backup, so the wrong key was derived and decryption failed. It now tries the current key first, then asks for the backup's passcode and derives the key from the backup's own salt, re-encrypting under the current key. Everything is decrypted *before* existing data is wiped, so a wrong passcode no longer erases current data. Also fixed vehicle ↔ entry links that could get scrambled on import.
+
+### v1.2
+- ✅ Vehicle Details moved into the same row as the stat cards.
+- ✅ **Duty Status** (Not Set / Duty Free / Duty Paid) with a rotated stamp on the vehicle selector card.
+- ✅ **Fingerprint / Face ID unlock** via WebAuthn (reworked to PRF-only in v1.9.5).
 
 ### v1.1
 - ✅ **Service Worker**: Stale-While-Revalidate strategy with v1.1 cache
@@ -392,7 +438,10 @@ MIT — Free for personal and commercial use.
 A: Yes. After the first load, the app shell is cached. All data is stored locally in IndexedDB.
 
 **Q: How do I change my passcode?**  
-A: Currently, you must export your data, clear site storage, re-import, and set a new passcode during first-time setup.
+A: Tap the 🔑 button in the header (v1.9.15+). Enter your current passcode, then the new one twice (6 characters minimum). All data is re-encrypted under a new key and salt. If Fingerprint / Face ID unlock was on, it is reset and you re-enable it from the header.
+
+**Q: I forgot my passcode. Can it be recovered?**  
+A: No. There is no backdoor; the passcode is the only way to derive the encryption key. Keep an encrypted backup and remember its passcode.
 
 **Q: Is there a file size limit for attachments?**  
 A: Yes — 5 MB per file. Attachments are Base64-encoded and encrypted. Practical total limit depends on your browser's IndexedDB quota (typically 50–200 MB).
