@@ -14,15 +14,19 @@
   - img-src keeps blob: because attachment images/thumbnails are shown
     via object URLs created from the Blob stored in IndexedDB, not by
     pointing straight at a data: URL.
-  - As of v1.9.4, script-src also carries 'wasm-unsafe-eval'. pdf.js
-    6.2.108's worker bundles a WebAssembly JPX/JPEG2000 image codec —
+  - As of v1.9.4, script-src also carries 'wasm-unsafe-eval'. pdf.js's
+    worker uses WebAssembly image decoders (JPX/JPEG2000, and since v1.9.18
+    the .wasm files in vendor/pdfjs-6.4.299/wasm/ for scanner PDFs) —
     a same-origin dedicated Worker inherits the page's CSP, and without
     this keyword some browsers (notably Firefox) refuse to instantiate
     ANY WebAssembly module under a strict script-src, which would break
     the PDF viewer on any attachment containing a JPX-encoded image.
     'wasm-unsafe-eval' only permits compiling/running WebAssembly — it
     does NOT enable 'unsafe-eval' for plain JS eval()/Function(), so
-    this is narrower than it might look.
+    this is narrower than it might look. (v1.9.18: the same wasm/ folder
+    also ships plain-JavaScript *_nowasm_fallback.js decoders, so scanner
+    PDFs still show if a host's CSP header ever lacks this keyword; the CSP
+    itself was not changed.)
   - frame-ancestors CANNOT be set here — it's an HTTP-header-only CSP
     directive; <meta http-equiv="Content-Security-Policy"> silently
     ignores it. On GitHub Pages (no custom headers) there is currently
@@ -52,7 +56,8 @@
 <script src="vendor/tailwind/tailwind.js"></script>
 <!--
   pdf.js — renders PDF attachments to <canvas> inside the in-app viewer.
-  Vendored locally from npm pdfjs-dist@6.2.108 (see README "Fully
+  Vendored locally from npm pdfjs-dist@6.4.299 in vendor/pdfjs-6.4.299/
+  (v1.9.18; was 6.2.108 — see README "Fully
   Local-Hosted Assets" / changelog for why this was upgraded from the
   3.11.174 originally shipped — CVE-2024-4367, fixed upstream in 4.2.67).
   pdfjs-dist 4.0+ only ships an ES module build (pdf.min.mjs, no more

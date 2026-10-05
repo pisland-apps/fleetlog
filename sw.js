@@ -9,7 +9,7 @@
 // — bump both together by hand on every deploy. See the matching comment
 // above APP_VERSION near the top of app.js.
 // ---------------------------------------------------------------------
-const CACHE_NAME = 'fleetlog-pwa-v1.9.17';
+const CACHE_NAME = 'fleetlog-pwa-v1.9.18';
 
 // As of v1.9.3 every asset (Tailwind, pdf.js + worker, Inter webfont) is
 // vendored locally under ./vendor and ./fonts instead of being fetched
@@ -35,8 +35,19 @@ const STATIC_ASSETS = [
   './icons/icon-384x384.png',
   './icons/icon-512x512.png',
   './vendor/tailwind/tailwind.js',
-  './vendor/pdfjs/pdf.min.mjs',
-  './vendor/pdfjs/pdf.worker.min.mjs',
+  // v1.9.18: pdf.js lives in a version-named folder (PDFJS_DIR in
+  // pdf-worker-init.js) so its main file, worker and decoders can only come
+  // from the same release. Keep these lines and PDFJS_DIR in step.
+  './vendor/pdfjs-6.4.299/pdf.min.mjs',
+  './vendor/pdfjs-6.4.299/pdf.worker.min.mjs',
+  // Image decoders for scanner PDFs: the .wasm files are the normal path; the
+  // *_nowasm_fallback.js are what pdf.js loads instead if a CSP forbids
+  // compiling WebAssembly. Both must work offline.
+  './vendor/pdfjs-6.4.299/wasm/jbig2.wasm',
+  './vendor/pdfjs-6.4.299/wasm/openjpeg.wasm',
+  './vendor/pdfjs-6.4.299/wasm/qcms_bg.wasm',
+  './vendor/pdfjs-6.4.299/wasm/jbig2_nowasm_fallback.js',
+  './vendor/pdfjs-6.4.299/wasm/openjpeg_nowasm_fallback.js',
   './fonts/inter.css',
   './fonts/files/inter-latin-300-normal.woff2',
   './fonts/files/inter-latin-400-normal.woff2',
@@ -59,7 +70,10 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
       console.log('[SW] Pre-caching static assets');
-      return cache.addAll(STATIC_ASSETS);
+      // v1.9.18: cache:'reload' so the pre-cache never copies a stale file out
+      // of the browser's own HTTP cache (GitHub Pages sends max-age=600),
+      // which could otherwise precache a half-old, half-new set of files.
+      return cache.addAll(STATIC_ASSETS.map((url) => new Request(url, { cache: 'reload' })));
     }).then(() => self.skipWaiting())
   );
 });

@@ -74,7 +74,7 @@ fleetlog-pwa/
 │   └── files/            # Inter latin subset, weights 300–800, woff2
 └── vendor/
     ├── tailwind/tailwind.js
-    └── pdfjs/            # pdf.min.mjs + pdf.worker.min.mjs
+    └── pdfjs-6.4.299/    # pdf.min.mjs + pdf.worker.min.mjs + wasm/ (image decoders); version-named folder since v1.9.18
 ```
 
 ---
@@ -120,8 +120,9 @@ the webfont — ships in the repo and is served same-origin:
 | Asset | Was loaded from | Now vendored at | Source (npm) |
 |-------|------------------|------------------|---------------|
 | Tailwind CSS | `cdn.jsdelivr.net` | `vendor/tailwind/tailwind.js` | `@tailwindcss/browser@4.3.3` |
-| pdf.js | `cdnjs.cloudflare.com` | `vendor/pdfjs/pdf.min.mjs` | `pdfjs-dist@6.2.108` |
-| pdf.js worker | `cdnjs.cloudflare.com` | `vendor/pdfjs/pdf.worker.min.mjs` | `pdfjs-dist@6.2.108` |
+| pdf.js | `cdnjs.cloudflare.com` | `vendor/pdfjs-6.4.299/pdf.min.mjs` | `pdfjs-dist@6.4.299` |
+| pdf.js worker | `cdnjs.cloudflare.com` | `vendor/pdfjs-6.4.299/pdf.worker.min.mjs` | `pdfjs-dist@6.4.299` |
+| pdf.js image decoders | (bundled) | `vendor/pdfjs-6.4.299/wasm/` (`jbig2`, `openjpeg`, `qcms` `.wasm` + plain-JS `*_nowasm_fallback.js`) | `pdfjs-dist@6.4.299` (`wasm/` folder) |
 | Inter webfont | `fonts.googleapis.com` / `fonts.gstatic.com` | `fonts/inter.css` + `fonts/files/*.woff2` | `@fontsource/inter@5.3.0` (latin subset, weights 300–800, woff2 only) |
 
 Why this matters: previously, `script-src`/`style-src`/`font-src`/
@@ -133,7 +134,15 @@ everywhere except `img-src blob:` (needed for the in-app attachment
 viewer) — see the comment above the `<meta http-equiv="Content-Security-
 Policy">` tag in `index.html`.
 
-**Updating a vendored dependency:** re-run `npm pack <package>@<version>`
+**Updating pdf.js (since v1.9.18):** take `build/pdf.min.mjs`, `build/pdf.worker.min.mjs`
+and the whole `wasm/` folder (including the `*_nowasm_fallback.js` files; `quickjs-eval.*`
+is not needed) from the SAME `pdfjs-dist` release, put them in a NEW folder
+`vendor/pdfjs-<version>/`, and change only `PDFJS_DIR` in `pdf-worker-init.js` and the
+`./vendor/pdfjs-…` lines in `STATIC_ASSETS` in `sw.js` (bump `CACHE_NAME` and
+`APP_VERSION` too). Never overwrite the files of an existing versioned folder, and
+never replace the `.mjs` files without the matching `wasm/` folder.
+
+**Updating another vendored dependency:** re-run `npm pack <package>@<version>`
 for the relevant package, copy the built file(s) into `vendor/` or
 `fonts/` at the same paths, and add any new/renamed files to
 `STATIC_ASSETS` in `sw.js` (bump `CACHE_NAME` too, per the "Updating the
@@ -202,6 +211,15 @@ This mirrors the attachment viewer in the companion Wealth Planner app.
 ---
 
 ## 📝 Changelog
+
+### v1.9.18 — pdf.js 6.4.299, Scanner PDFs Shown, Version-Named pdf.js Folder
+- 🔒 **pdf.js updated 6.2.108 → 6.4.299** (latest `pdfjs-dist` on 2026-10-05; 6.2.108 already had the CVE-2024-4367 fix). Same API, so the viewer's `getPage` / `getViewport` / `render` calls did not change.
+- 🐛 **PDFs saved by a flat-bed scanner showed blank pages.** Scanner software such as EPSON Scan stores each page as one 1-bit black-and-white image (CCITT / JBIG2). Since pdf.js 5 the decoders for those images, and for JPEG2000, are WebAssembly files that must be handed to `getDocument()` as `wasmUrl`; FleetLog never did, so those pages could not be decoded (console: "JBig2 failed to initialize"). Ordinary PDFs were not affected. New `vendor/pdfjs-6.4.299/wasm/` holds `jbig2.wasm`, `openjpeg.wasm`, `qcms_bg.wasm` and the plain-JavaScript `jbig2_nowasm_fallback.js` / `openjpeg_nowasm_fallback.js` (plus licences); the CSP already allows `'wasm-unsafe-eval'` (v1.9.4) so the `.wasm` files are used, and the JavaScript copies take over by themselves on a host whose CSP header lacks that keyword. **No CSP / `_headers` change.**
+- 🐛 **Large scan pages sometimes blank.** A 600 dpi page is one ~28-megapixel image; by default pdf.js only *guesses* the largest canvas the browser can make, and when the guess or the allocation fails under memory / GPU pressure the page stays white (`transferToImageBitmap … ImageBitmap construction failed`), so it showed "sometimes". `getDocument()` now gets `canvasMaxAreaInBytes: 32 * 1024 * 1024`: images over ~8.4 megapixels are shrunk first (6618 × 4234 → about 3309 × 2117, still far sharper than the viewer's page width).
+- 🛠️ **pdf.js moved to a version-named folder** `vendor/pdfjs-6.4.299/` (main file, worker, `wasm/`). `pdf-worker-init.js` builds every path from one constant, `PDFJS_DIR`, and `sw.js` precaches the same paths. The main file and the worker must be the same release: a 6.2.108 main file with a 6.4.299 worker never gets an answer (`Unknown action from worker: test`) and the viewer stays on "Loading…". With fixed file names and a cache-based service worker one file of the pair can come from an old cache and the other from the new one during an update (this happened in the sibling app Ledger); different releases now have different paths, so they cannot be mixed.
+- 🛠️ **One place opens PDFs:** new `openPdfDocument()` in `app.js` (`isEvalSupported: false`, `wasmUrl`, `canvasMaxAreaInBytes`). If the document does not open within 30 s the viewer says "the PDF viewer did not respond (close and reopen the app once, then try again)" instead of "Loading…" forever.
+- 🛠️ **Service worker pre-cache now fetches with `cache: 'reload'`**, so it never copies a stale file out of the browser's HTTP cache (GitHub Pages allows 10 minutes).
+- `APP_VERSION` / `APP_VERSION_DATE` and `CACHE_NAME` bumped together. No change to stored data. **Deploy:** upload the whole `vendor/pdfjs-6.4.299/` folder (with `wasm/`) and delete the old `vendor/pdfjs/` folder. Do not use "Clear site data" to fix a stuck viewer — it deletes IndexedDB, which holds the encrypted vehicle data; unregister the service worker instead.
 
 ### v1.9.17 — Documentation Clean-Up (no behavior change)
 - 📝 **README brought in line with the code.** The file structure now lists `app.js`, `styles.css`, `pdf-worker-init.js`, `_headers`, `vendor/` and `fonts/`; the FAQ no longer says a passcode can't be changed (Change Passcode exists since v1.9.15); the Security section no longer talks about an in-app lockout (removed in v1.9.7); the Features table lists Change Passcode, biometric unlock, the numpad and the duty stamp. Changelog entries that were missing were added: v1.9.8, v1.9.7, v1.9.1 and v1.2 – v1.7 (the v1.2 – v1.7 entries are reconstructed from the version notes of those releases, not from their code).

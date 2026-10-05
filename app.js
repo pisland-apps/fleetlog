@@ -15,8 +15,8 @@ const DB_VERSION = 4;
 // and do NOT sync automatically — bump both together by hand on every
 // deploy. See the matching comment above CACHE_NAME in sw.js.
 // ---------------------------------------------------------------------
-const APP_VERSION = '1.9.17';
-const APP_VERSION_DATE = '2026-10-02';
+const APP_VERSION = '1.9.18';
+const APP_VERSION_DATE = '2026-10-05';
 
 // Populate the badge as soon as this script runs — deliberately not inside
 // the DOMContentLoaded handler further down, so it appears immediately and
@@ -1533,12 +1533,7 @@ class FleetApp {
       } else if (isPdf) {
         if (!window.pdfjsLib) throw new Error('PDF viewer failed to load');
         const bytes = new Uint8Array(await blob.arrayBuffer());
-        // isEvalSupported: false is defense-in-depth, not a fix for a live
-        // issue — pdfjs-dist 6.2.108 (vendored here) is already patched
-        // against CVE-2024-4367. Explicitly disabling eval-based fast
-        // paths costs nothing measurable and means a future downgrade or
-        // upstream regression can't silently reopen that class of bug.
-        const pdf = await pdfjsLib.getDocument({ data: bytes, isEvalSupported: false }).promise;
+        const pdf = await this.openPdfDocument(bytes);
         content.innerHTML = '';
         const containerWidth = content.clientWidth || 700;
         for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
@@ -1558,6 +1553,51 @@ class FleetApp {
       }
     } catch (err) {
       content.innerHTML = '<div class="py-16 text-red-500 text-sm px-4">Could not preview this file: ' + this.escape(err.message) + '</div>';
+    }
+  }
+
+  // v1.9.18: the one place that opens a PDF with pdf.js.
+  // - isEvalSupported: false is defense-in-depth, not a fix for a live issue —
+  //   the vendored pdf.js is already patched against CVE-2024-4367. Explicitly
+  //   disabling eval-based fast paths costs nothing measurable and means a
+  //   future downgrade or upstream regression can't silently reopen that
+  //   class of bug.
+  // - wasmUrl: since pdf.js 5 the image decoders for scanner PDFs (1-bit
+  //   CCITT / JBIG2) and JPEG2000 live in vendor/pdfjs-<version>/wasm/. Without
+  //   it those pages render blank ("JBig2 failed to initialize"). The folder
+  //   holds the .wasm modules (used because the CSP has 'wasm-unsafe-eval')
+  //   AND plain-JavaScript *_nowasm_fallback.js copies, which pdf.js loads by
+  //   itself if a host's CSP header forbids compiling WebAssembly.
+  // - canvasMaxAreaInBytes: a 600 dpi scanner page is one ~28-megapixel 1-bit
+  //   image. By default pdf.js GUESSES the largest canvas this browser can
+  //   make, and when that guess or the allocation fails (memory / GPU
+  //   pressure, so only SOMETIMES) the page stays blank ("transferToImageBitmap
+  //   ... ImageBitmap construction failed"). A fixed 32 MiB limit (~8.4 Mpx)
+  //   makes pdf.js shrink such images first, every time; ~3300 px wide is still
+  //   far more than the viewer shows.
+  // - 30 s timeout on opening the document: if the worker never answers (e.g.
+  //   main file and worker out of step) show a clear message instead of
+  //   leaving "Loading…" on screen forever.
+  async openPdfDocument(bytes) {
+    const loadingTask = pdfjsLib.getDocument({
+      data: bytes,
+      isEvalSupported: false,
+      wasmUrl: window.PDFJS_WASM_URL,
+      canvasMaxAreaInBytes: 32 * 1024 * 1024
+    });
+    let timer;
+    try {
+      return await Promise.race([
+        loadingTask.promise,
+        new Promise((_, reject) => {
+          timer = setTimeout(() => {
+            loadingTask.destroy();
+            reject(new Error('the PDF viewer did not respond (close and reopen the app once, then try again)'));
+          }, 30000);
+        })
+      ]);
+    } finally {
+      clearTimeout(timer);
     }
   }
 
