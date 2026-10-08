@@ -136,9 +136,6 @@
         Unlock App
       </button>
     </form>
-    <button id="biometricUnlockBtn" data-click="unlockWithBiometric" class="hidden w-full py-3 bg-slate-800 hover:bg-slate-900 text-white font-semibold rounded-xl transition items-center justify-center gap-2">
-      <span>👆</span> Unlock with Fingerprint / Face ID
-    </button>
   </div>
 </div>
 
@@ -184,13 +181,11 @@
           <button data-click="showAddVehicle" class="w-full sm:w-auto px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-900 font-semibold rounded-lg transition">＋ Add Vehicle</button>
         </div>
         <!-- Icon-only utility buttons kept together in their own row on
-             mobile (flex-1 so 2 or 3 visible buttons — biometric is
-             conditionally shown — always split the row evenly, no gap)
+             mobile (flex-1 so the 2 buttons split the row evenly, no gap)
              instead of trailing unevenly at the end of the action grid
              above. sm:contents dissolves this wrapper on desktop so the
              buttons fall back in line with everything else, unchanged. -->
         <div class="flex gap-2 sm:contents">
-          <button id="biometricToggleBtn" data-click="toggleBiometric" class="hidden flex-1 sm:flex-none text-center px-3 py-2 sm:py-1.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition" title="Enable Fingerprint / Face ID Unlock">👆</button>
           <button data-click="showChangePasscodeModal" class="flex-1 sm:flex-none text-center px-3 py-2 sm:py-1.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition" title="Change Passcode">🔑</button>
           <button data-click="lockApp" class="flex-1 sm:flex-none text-center px-3 py-2 sm:py-1.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition text-amber-400" title="Lock App">🔒</button>
         </div>
@@ -568,7 +563,7 @@
       <button data-click="closeModal" data-click-args='["changePasscodeModal"]' class="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
     </div>
     <form data-submit="submitChangePasscode" data-submit-args='["@event"]' class="p-6 space-y-3">
-      <p class="text-sm text-gray-500">All your data is re-encrypted with the new passcode — this can take a moment for large data sets. Fingerprint/Face ID unlock, if enabled, will need to be re-enabled afterward.</p>
+      <p class="text-sm text-gray-500">All your data is re-encrypted with the new passcode — this can take a moment for large data sets.</p>
       <div>
         <label class="block text-xs font-medium text-gray-500 mb-1" for="currentPasscodeInput">Current Passcode</label>
         <input type="password" id="currentPasscodeInput" autocomplete="off" class="w-full text-center tracking-widest text-lg px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition" placeholder="••••••••" required>

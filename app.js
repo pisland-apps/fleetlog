@@ -15,8 +15,8 @@ const DB_VERSION = 4;
 // and do NOT sync automatically — bump both together by hand on every
 // deploy. See the matching comment above CACHE_NAME in sw.js.
 // ---------------------------------------------------------------------
-const APP_VERSION = '1.9.18';
-const APP_VERSION_DATE = '2026-10-05';
+const APP_VERSION = '1.9.19';
+const APP_VERSION_DATE = '2026-10-08';
 
 // Populate the badge as soon as this script runs — deliberately not inside
 // the DOMContentLoaded handler further down, so it appears immediately and
@@ -137,7 +137,6 @@ class FleetApp {
     this.cryptoKey = null;
     this.salt = null;
     this.isSetup = false;
-    this.biometricRecord = null;
 
     // Stack of currently-open modal ids, in open order. Used only to know
     // which modal to close on a back-button press (see the popstate
@@ -183,7 +182,6 @@ class FleetApp {
     const tx = this.db.transaction('config', 'readonly');
     const store = tx.objectStore('config');
     const authReq = store.get('auth');
-    const bioReq = store.get('biometric');
 
     authReq.onsuccess = () => {
       const res = authReq.result;
@@ -206,25 +204,15 @@ class FleetApp {
       document.getElementById('lockScreen').classList.remove('hidden');
     };
 
-    bioReq.onsuccess = () => {
-      const record = bioReq.result || null;
-      if (record && record.mode !== 'prf') {
-        // Legacy 'wrapped' record from v1.9.3/1.9.4, or a pre-v1.9.3
-        // record with no `mode` at all — both stored the wrapping key
-        // in the clear, so they're removed automatically rather than
-        // kept working. The user falls back to passcode-only unlock
-        // and can re-enroll; it'll only succeed if their device/browser
-        // actually supports the WebAuthn PRF extension. See the
-        // BIOMETRIC KEY WRAPPING comment further down for why.
-        const delTx = this.db.transaction('config', 'readwrite');
-        delTx.objectStore('config').delete('biometric');
-        this.biometricRecord = null;
-        this.toast('Fingerprint/Face ID unlock was reset — it previously stored its key in a way that didn\'t protect against local data theft. Re-enable it from Settings if supported.', 'error');
-      } else {
-        this.biometricRecord = record;
-      }
-      this.showBiometricUnlockButton();
-    };
+    // v1.9.19: biometric unlock was removed; delete any record an earlier
+    // build left behind (it holds a passcode-derived key wrapped with a
+    // WebAuthn-PRF key). Best effort, never blocks startup.
+    try {
+      const delTx = this.db.transaction('config', 'readwrite');
+      delTx.objectStore('config').delete('biometric');
+    } catch (err) {
+      console.warn('Could not purge legacy biometric record:', err);
+    }
   }
 
   // Minimum passcode length enforced only when CREATING a passcode
@@ -235,36 +223,6 @@ class FleetApp {
   // again. Passcode strength is the primary defense against someone who
   // has copied the raw IndexedDB files.
   static MIN_PASSCODE_LENGTH = 6;
-
-  isBiometricPlatformSupported() {
-    return !!(window.PublicKeyCredential && navigator.credentials && window.isSecureContext);
-  }
-
-  showBiometricUnlockButton() {
-    const bioBtn = document.getElementById('biometricUnlockBtn');
-    if (!bioBtn) return;
-    if (this.biometricRecord && this.isBiometricPlatformSupported()) {
-      bioBtn.classList.remove('hidden');
-      bioBtn.classList.add('flex');
-    } else {
-      bioBtn.classList.add('hidden');
-      bioBtn.classList.remove('flex');
-    }
-  }
-
-  refreshBiometricToggle() {
-    const toggleBtn = document.getElementById('biometricToggleBtn');
-    if (!toggleBtn) return;
-    if (this.isBiometricPlatformSupported()) {
-      toggleBtn.classList.remove('hidden');
-      toggleBtn.classList.toggle('text-amber-400', !!this.biometricRecord);
-      toggleBtn.title = this.biometricRecord
-        ? 'Disable Fingerprint / Face ID Unlock (hardware-protected)'
-        : 'Enable Fingerprint / Face ID Unlock';
-    } else {
-      toggleBtn.classList.add('hidden');
-    }
-  }
 
   bufToBase64(buf) {
     const bytes = new Uint8Array(buf);
@@ -278,189 +236,6 @@ class FleetApp {
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
     return bytes.buffer;
-  }
-
-  // ==================== BIOMETRIC KEY WRAPPING ====================
-  // PRF-only, as of v1.9.5. The wrapping key is never generated or
-  // stored anywhere. It's derived fresh on every unlock from the
-  // authenticator's WebAuthn PRF extension output (a hardware-bound
-  // secret + a stored, non-secret salt) via HKDF. Someone who copies the
-  // raw IndexedDB files still cannot decrypt the wrapped key, because the
-  // wrapping key material never touches disk — it only ever exists
-  // transiently in memory after a real fingerprint/Face ID assertion.
-  //
-  // v1.9.3–1.9.4 also offered a 'wrapped' fallback mode for browsers/
-  // authenticators without PRF support, where the wrapping key WAS
-  // stored in IndexedDB right next to the data it wraps. That added no
-  // protection against anyone with raw DB access — worse, it let them
-  // skip straight past the passcode's PBKDF2 hardening entirely, which
-  // is a strictly worse position than not offering biometric unlock at
-  // all on those devices. That mode has been removed: enrollment now
-  // requires PRF support, and any 'wrapped' record found from a prior
-  // version is deleted automatically on load (see checkAuthStatus()) —
-  // the user falls back to passcode-only unlock and can re-enroll if
-  // their device/browser turns out to support PRF.
-
-  isPrfSupported(credential) {
-    const results = credential.getClientExtensionResults && credential.getClientExtensionResults();
-    return !!(results && results.prf && results.prf.enabled);
-  }
-
-  async derivePrfWrappingKey(assertionOrCreate, salt) {
-    const results = assertionOrCreate.getClientExtensionResults();
-    const prfOutput = results && results.prf && results.prf.results && results.prf.results.first;
-    if (!prfOutput) throw new Error('PRF output unavailable');
-    // HKDF over the 32-byte PRF secret to derive a dedicated AES-GCM key,
-    // rather than importing the PRF bytes directly.
-    const hkdfKey = await crypto.subtle.importKey('raw', prfOutput, 'HKDF', false, ['deriveKey']);
-    return crypto.subtle.deriveKey(
-      { name: 'HKDF', hash: 'SHA-256', salt, info: new TextEncoder().encode('FleetLog biometric wrap v1') },
-      hkdfKey,
-      { name: 'AES-GCM', length: 256 },
-      false,
-      ['encrypt', 'decrypt']
-    );
-  }
-
-  async enrollBiometric() {
-    if (!this.cryptoKey) { this.toast('Unlock the app first', 'error'); return; }
-    if (!this.isBiometricPlatformSupported()) {
-      this.toast('Fingerprint / Face ID unlock is not supported on this device or browser', 'error');
-      return;
-    }
-    try {
-      const challenge = crypto.getRandomValues(new Uint8Array(32));
-      const userId = crypto.getRandomValues(new Uint8Array(16));
-      const prfSalt = crypto.getRandomValues(new Uint8Array(32));
-      const credential = await navigator.credentials.create({
-        publicKey: {
-          challenge,
-          rp: { name: 'FleetLog' },
-          user: { id: userId, name: 'fleetlog-user', displayName: 'FleetLog User' },
-          pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
-          authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', requireResidentKey: false },
-          timeout: 60000,
-          attestation: 'none',
-          extensions: { prf: {} }
-        }
-      });
-      if (!credential) throw new Error('Enrollment cancelled');
-
-      if (!this.isPrfSupported(credential)) {
-        // No PRF support on this browser/authenticator combination — see
-        // the block comment above for why we don't fall back to a
-        // storage-only "wrapped" scheme anymore. The passkey we just
-        // created is simply left unused; there's no JS-level way to
-        // delete it, but it's harmless sitting unreferenced on the
-        // device/platform authenticator.
-        this.toast('This browser/device doesn\'t support hardware-backed biometric unlock, so it wasn\'t enabled — your passcode is still the only unlock method.', 'error');
-        return;
-      }
-
-      // Immediately follow up with a get() to actually pull the PRF
-      // secret for this credential (create() only confirms support).
-      const assertion = await navigator.credentials.get({
-        publicKey: {
-          challenge: crypto.getRandomValues(new Uint8Array(32)),
-          allowCredentials: [{ id: credential.rawId, type: 'public-key' }],
-          userVerification: 'required',
-          timeout: 60000,
-          extensions: { prf: { eval: { first: prfSalt } } }
-        }
-      });
-      const wrappingKey = await this.derivePrfWrappingKey(assertion, prfSalt);
-      const rawKey = await crypto.subtle.exportKey('raw', this.cryptoKey);
-      const iv = crypto.getRandomValues(new Uint8Array(12));
-      const wrappedKey = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, wrappingKey, rawKey);
-      const record = {
-        key: 'biometric',
-        mode: 'prf',
-        credentialId: this.bufToBase64(credential.rawId),
-        prfSalt: Array.from(prfSalt),
-        iv: Array.from(iv),
-        wrappedKey: this.bufToBase64(wrappedKey)
-      };
-
-      const tx = this.db.transaction('config', 'readwrite');
-      tx.objectStore('config').put(record);
-      await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = j; });
-
-      this.biometricRecord = record;
-      this.refreshBiometricToggle();
-      this.toast('Fingerprint / Face ID unlock enabled (hardware-protected)');
-    } catch (err) {
-      this.toast('Could not enable biometric unlock: ' + err.message, 'error');
-    }
-  }
-
-  async disableBiometric() {
-    try {
-      const tx = this.db.transaction('config', 'readwrite');
-      tx.objectStore('config').delete('biometric');
-      await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = j; });
-      this.biometricRecord = null;
-      this.refreshBiometricToggle();
-      this.toast('Fingerprint / Face ID unlock disabled');
-    } catch (err) {
-      this.toast('Could not disable biometric unlock: ' + err.message, 'error');
-    }
-  }
-
-  async toggleBiometric() {
-    if (this.biometricRecord) {
-      if (confirm('Disable Fingerprint / Face ID unlock on this device?')) {
-        await this.disableBiometric();
-      }
-    } else {
-      await this.enrollBiometric();
-    }
-  }
-
-  async unlockWithBiometric() {
-    if (!this.biometricRecord) return;
-    // Deliberately does NOT call maybeUpgradeIterations() — that upgrade
-    // needs the plaintext passcode to re-derive a new PBKDF2 key, which
-    // this path never has (that's the whole point of biometric unlock).
-    // An install that's always unlocked via fingerprint/Face ID stays on
-    // whatever iteration count it was set up with until the user unlocks
-    // with the passcode at least once after upgrading to v1.9.6+.
-    //
-    // Should always be 'prf' by this point — checkAuthStatus() deletes any
-    // legacy non-PRF record before this method is ever reachable. Guard
-    // kept as a defensive check, not an expected path.
-    if (this.biometricRecord.mode !== 'prf') {
-      this.toast('Biometric unlock record is invalid — please re-enable it', 'error');
-      return;
-    }
-    try {
-      const prfSalt = new Uint8Array(this.biometricRecord.prfSalt);
-      const assertion = await navigator.credentials.get({
-        publicKey: {
-          challenge: crypto.getRandomValues(new Uint8Array(32)),
-          allowCredentials: [{ id: this.base64ToBuf(this.biometricRecord.credentialId), type: 'public-key' }],
-          userVerification: 'required',
-          timeout: 60000,
-          extensions: { prf: { eval: { first: prfSalt } } }
-        }
-      });
-      if (!assertion) throw new Error('Authentication cancelled');
-      const wrappingKey = await this.derivePrfWrappingKey(assertion, prfSalt);
-
-      const iv = new Uint8Array(this.biometricRecord.iv);
-      const rawKey = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, wrappingKey, this.base64ToBuf(this.biometricRecord.wrappedKey));
-      const cryptoKey = await crypto.subtle.importKey('raw', rawKey, { name: 'AES-GCM' }, true, ['encrypt', 'decrypt']);
-
-      const tx = this.db.transaction('config', 'readonly');
-      const req = tx.objectStore('config').get('auth');
-      const authRecord = await new Promise((r, j) => { req.onsuccess = () => r(req.result); req.onerror = j; });
-      const verified = await CryptoEngine.decrypt(authRecord.verifier, cryptoKey);
-      if (verified.check !== 'FLEETLOG_VALID') throw new Error('Key mismatch');
-
-      this.cryptoKey = cryptoKey;
-      this.unlockApp();
-    } catch (err) {
-      this.toast('Biometric unlock failed: ' + err.message, 'error');
-    }
   }
 
   // ==================== LOCK-SCREEN NUMPAD ====================
@@ -564,9 +339,8 @@ class FleetApp {
   // re-encrypted under the new key in the same operation, or the app
   // would fail to decrypt its own data on the very next load.
   //
-  // Runs unawaited right after a successful passcode unlock (never on the
-  // biometric path — see below) so it doesn't add latency to getting into
-  // the app; failures are logged and silently ignored; the user stays on
+  // Runs unawaited right after a successful passcode unlock so it doesn't
+  // add latency to getting into the app; failures are logged and silently ignored; the user stays on
   // LEGACY_ITERATIONS and this simply retries on their next passcode
   // unlock rather than surfacing an error for a background hardening step.
   async maybeUpgradeIterations(passcode) {
@@ -574,10 +348,7 @@ class FleetApp {
     try {
       const newSalt = crypto.getRandomValues(new Uint8Array(16));
       const newKey = await CryptoEngine.deriveKey(passcode, newSalt, CryptoEngine.CURRENT_ITERATIONS);
-      const hadBiometric = await this._reencryptDataStore(newKey, newSalt, CryptoEngine.CURRENT_ITERATIONS);
-      if (hadBiometric) {
-        this.toast('Security upgrade complete. Fingerprint/Face ID unlock was reset — please re-enable it from Settings.', 'error');
-      }
+      await this._reencryptDataStore(newKey, newSalt, CryptoEngine.CURRENT_ITERATIONS);
     } catch (err) {
       console.error('PBKDF2 iteration upgrade failed (will retry on next unlock):', err);
     }
@@ -590,12 +361,6 @@ class FleetApp {
   // AES-GCM key protecting every encrypted record: the silent PBKDF2
   // hardening above, and the user-initiated changePasscode flow below —
   // get this wrong and the app can't decrypt its own data on next load.
-  //
-  // Any existing biometric unlock record wraps the OLD key's raw bytes,
-  // so it's invalidated (deleted) here rather than re-wrapped — doing
-  // that without another fingerprint/Face-ID prompt mid-flow isn't
-  // possible. Returns true if a biometric record was invalidated, so
-  // callers can surface the right toast/message.
   async _reencryptDataStore(newKey, newSalt, newIterations) {
     const readTx = this.db.transaction(['vehicles', 'entries'], 'readonly');
     const vehiclesRaw = await new Promise((r, j) => {
@@ -621,8 +386,6 @@ class FleetApp {
     }
     const newVerifier = await CryptoEngine.encrypt({ check: 'FLEETLOG_VALID' }, newKey);
 
-    const hadBiometric = !!this.biometricRecord;
-
     const writeTx = this.db.transaction(['vehicles', 'entries', 'config'], 'readwrite');
     for (const row of newVehicleRows) writeTx.objectStore('vehicles').put(row);
     for (const row of newEntryRows) writeTx.objectStore('entries').put(row);
@@ -632,19 +395,11 @@ class FleetApp {
       iterations: newIterations,
       verifier: newVerifier
     });
-    if (hadBiometric) writeTx.objectStore('config').delete('biometric');
     await new Promise((r, j) => { writeTx.oncomplete = r; writeTx.onerror = () => j(writeTx.error); });
 
     this.salt = newSalt;
     this.iterations = newIterations;
     this.cryptoKey = newKey;
-
-    if (hadBiometric) {
-      this.biometricRecord = null;
-      this.showBiometricUnlockButton();
-      this.refreshBiometricToggle();
-    }
-    return hadBiometric;
   }
 
   // ==================== CHANGE PASSCODE (v1.9.15+) ====================
@@ -707,18 +462,14 @@ class FleetApp {
     try {
       const newSalt = crypto.getRandomValues(new Uint8Array(16));
       const newKey = await CryptoEngine.deriveKey(next, newSalt, CryptoEngine.CURRENT_ITERATIONS);
-      const hadBiometric = await this._reencryptDataStore(newKey, newSalt, CryptoEngine.CURRENT_ITERATIONS);
+      await this._reencryptDataStore(newKey, newSalt, CryptoEngine.CURRENT_ITERATIONS);
 
       currentInput.value = '';
       newInput.value = '';
       confirmInput.value = '';
       this.closeModal('changePasscodeModal');
 
-      if (hadBiometric) {
-        this.toast('Passcode changed. Fingerprint/Face ID unlock was reset — please re-enable it from Settings.', 'error');
-      } else {
-        this.toast('Passcode changed successfully.');
-      }
+      this.toast('Passcode changed successfully.');
     } catch (err) {
       alert('Failed to change passcode: ' + err.message);
     }
@@ -728,7 +479,6 @@ class FleetApp {
     document.getElementById('lockScreen').classList.add('hidden');
     document.getElementById('appContainer').classList.remove('hidden');
     document.getElementById('passcodeInput').value = '';
-    this.refreshBiometricToggle();
 
     await this.loadVehicles();
     if (this.vehicles.length > 0) {
@@ -745,7 +495,6 @@ class FleetApp {
     this.entries = [];
     document.getElementById('appContainer').classList.add('hidden');
     document.getElementById('lockScreen').classList.remove('hidden');
-    this.showBiometricUnlockButton();
 
     // Reset numpad back to its default no-keyboard state each time the
     // lock screen reappears, so a previous "use keyboard" toggle doesn't

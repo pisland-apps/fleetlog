@@ -24,7 +24,6 @@
 | 💾 **Import / Export** | Encrypted or plaintext JSON backup/restore |
 | 🖨️ **Print Reports** | Landscape/portrait optimized print styles with breakdown tables |
 | 🔑 **Change Passcode** | Re-encrypts all records under a new key and salt (v1.9.15) |
-| 👆 **Fingerprint / Face ID** | Optional unlock shortcut, only where WebAuthn PRF is supported (v1.9.5) |
 | 🔢 **Lock-screen numpad** | Big on-screen numpad; 🔤 switches to the normal keyboard (v1.9.8) |
 | 🏷️ **Duty status stamp** | Duty Free / Duty Paid badge on a vehicle card (v1.2) |
 
@@ -96,7 +95,7 @@ AES-256-GCM Key ──► Encrypt/Decrypt all IndexedDB records
 - If the passcode is lost, **data cannot be recovered** — there is no backdoor.
 - **Passcode strength:** a minimum of 6 characters is enforced when *creating* a passcode. This isn't enforced retroactively on unlock (an existing shorter passcode still works). There is **no in-app lockout** (it was added in v1.9.3 and removed in v1.9.7), so passcode strength and the PBKDF2 iteration count are what protect against someone who has copied the raw IndexedDB files and is brute-forcing offline.
 - **Iteration count upgrades automatically:** installs created before v1.9.6 (100k iterations) are silently upgraded to 600k — re-encrypting all stored records under a freshly derived key — the first time the app is unlocked with the *passcode* (not biometric) on v1.9.6+. If biometric unlock was enabled, it's reset by this upgrade and needs re-enabling once, since it wraps the old key's bytes. **Change Passcode** (v1.9.15) does the same re-encryption with a new key and a fresh salt, and resets biometric unlock for the same reason.
-- **Biometric unlock is PRF-only** (v1.9.5): the wrapping key is derived from the authenticator on each unlock and never stored. If the device doesn't support WebAuthn PRF, the passcode stays the only unlock method.
+- **No biometric unlock** (removed in v1.9.19): it needed the WebAuthn PRF extension, which many phones don't provide, and it was only a shortcut to the passcode. The passcode is the only unlock method.
 - **Clickjacking (`frame-ancestors`):** can't be set via the `<meta>` CSP tag in `index.html` — it's an HTTP-header-only directive. See the repo-root `_headers` file, which sets it (plus `X-Frame-Options` etc.) on hosts that honor a `_headers` file (e.g. Cloudflare Pages, Netlify). Plain GitHub Pages ignores that file, so this gap remains open there.
 
 ---
@@ -211,6 +210,12 @@ This mirrors the attachment viewer in the companion Wealth Planner app.
 ---
 
 ## 📝 Changelog
+
+### v1.9.19 — Biometric (Fingerprint / Face ID) Unlock Removed
+- 🗑️ **Removed the Fingerprint / Face ID unlock.** Since v1.9.5 it worked only where the WebAuthn PRF extension is available, which the owner's Samsung and Xiaomi phones do not provide, so there it could never be enabled. It was only a shortcut to the passcode (PBKDF2 + AES-256-GCM), so removing it lowers no protection. The earlier non-PRF fallback stays gone (v1.9.5 reasoning).
+- Removed: the lock-screen "Unlock with Fingerprint / Face ID" button, the 👆 header toggle, all enrol / disable / unlock code, and the "reset biometric" toasts in Change Passcode and the PBKDF2 upgrade. `_reencryptDataStore()` no longer returns a value.
+- Added: on startup `checkAuthStatus()` deletes any `biometric` record in the `config` store that an older version left behind (a key wrapped with a PRF-derived key). A leftover passkey in the phone's credential manager is harmless and can be deleted there.
+- `APP_VERSION` / `APP_VERSION_DATE` (1.9.19, 2026-10-08) and `CACHE_NAME` bumped together. No change to stored data formats or backups. **Deploy:** upload `app.js`, `index.html`, `sw.js`, `README.md`.
 
 ### v1.9.18 — pdf.js 6.4.299, Scanner PDFs Shown, Version-Named pdf.js Folder
 - 🔒 **pdf.js updated 6.2.108 → 6.4.299** (latest `pdfjs-dist` on 2026-10-05; 6.2.108 already had the CVE-2024-4367 fix). Same API, so the viewer's `getPage` / `getViewport` / `render` calls did not change.
@@ -434,7 +439,7 @@ This mirrors the attachment viewer in the companion Wealth Planner app.
 ### v1.2
 - ✅ Vehicle Details moved into the same row as the stat cards.
 - ✅ **Duty Status** (Not Set / Duty Free / Duty Paid) with a rotated stamp on the vehicle selector card.
-- ✅ **Fingerprint / Face ID unlock** via WebAuthn (reworked to PRF-only in v1.9.5).
+- ✅ **Fingerprint / Face ID unlock** via WebAuthn (reworked to PRF-only in v1.9.5; removed in v1.9.19).
 
 ### v1.1
 - ✅ **Service Worker**: Stale-While-Revalidate strategy with v1.1 cache
@@ -456,7 +461,7 @@ MIT — Free for personal and commercial use.
 A: Yes. After the first load, the app shell is cached. All data is stored locally in IndexedDB.
 
 **Q: How do I change my passcode?**  
-A: Tap the 🔑 button in the header (v1.9.15+). Enter your current passcode, then the new one twice (6 characters minimum). All data is re-encrypted under a new key and salt. If Fingerprint / Face ID unlock was on, it is reset and you re-enable it from the header.
+A: Tap the 🔑 button in the header (v1.9.15+). Enter your current passcode, then the new one twice (6 characters minimum). All data is re-encrypted under a new key and salt.
 
 **Q: I forgot my passcode. Can it be recovered?**  
 A: No. There is no backdoor; the passcode is the only way to derive the encryption key. Keep an encrypted backup and remember its passcode.
