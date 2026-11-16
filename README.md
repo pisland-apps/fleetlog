@@ -211,6 +211,11 @@ This mirrors the attachment viewer in the companion Wealth Planner app.
 
 ## 📝 Changelog
 
+### v1.9.20 — Phone Card Layout for the Maintenance & Depreciation Log
+- 📱 **On phones (screen width ≤ 640 px) each log row is now a stacked card** instead of a wide table you had to scroll sideways. Top line: date + type badge, KM, ✏️/🗑️; then Supplier (bold); then Particulars at full width; then the amounts in a light box with the label on the left and the figure on the right. Amounts no longer break as "RM" / "1,099.90" on two lines. Attachments sit directly under their card.
+- The column headers are hidden on phones except **Date ↕**, which still sorts. Tablets, desktop and **printing are unchanged** (screen-only media query).
+- Changes: `styles.css` (new phone block), `app.js` (row classes `fl-row`, `fl-date`, `fl-km`, `fl-sup`, `fl-part`, `fl-amt`, `fl-act`, `fl-attach`; version), `index.html` (`fl-th-date` class), `sw.js` (`CACHE_NAME`). No data-format or backup change. **Deploy:** upload `styles.css`, `app.js`, `index.html`, `sw.js`, `README.md`.
+
 ### v1.9.19 — Biometric (Fingerprint / Face ID) Unlock Removed
 - 🗑️ **Removed the Fingerprint / Face ID unlock.** Since v1.9.5 it worked only where the WebAuthn PRF extension is available, which the owner's Samsung and Xiaomi phones do not provide, so there it could never be enabled. It was only a shortcut to the passcode (PBKDF2 + AES-256-GCM), so removing it lowers no protection. The earlier non-PRF fallback stays gone (v1.9.5 reasoning).
 - Removed: the lock-screen "Unlock with Fingerprint / Face ID" button, the 👆 header toggle, all enrol / disable / unlock code, and the "reset biometric" toasts in Change Passcode and the PBKDF2 upgrade. `_reencryptDataStore()` no longer returns a value.

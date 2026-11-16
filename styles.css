@@ -55,6 +55,66 @@
     .fleet-table { min-width: 640px; }
   }
 
+
+  /* ===== PHONE CARD LAYOUT (v1.9.20) =====
+     On narrow screens each log row becomes a stacked card so Particulars
+     and Amount Breakdown are readable without sideways scrolling.
+     Screen only — print keeps the normal table. */
+  @media screen and (max-width: 640px) {
+    .fleet-table { min-width: 0; width: 100%; display: block; }
+    .fleet-table thead, .fleet-table tbody { display: block; }
+    .fleet-table thead tr { display: flex; }
+    .fleet-table thead th { display: none; }
+    .fleet-table thead th.fl-th-date { display: block; }
+
+    .fleet-table .fl-row {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      grid-template-areas:
+        "date km act"
+        "sup  sup sup"
+        "part part part"
+        "amt  amt amt";
+      align-items: start;
+      padding: 0.75rem 0.5rem 0.75rem;
+      row-gap: 0.25rem;
+    }
+    .fleet-table .fl-row > td { display: block; padding: 0; border: 0; min-width: 0; }
+    .fleet-table .fl-date { grid-area: date; }
+    .fleet-table .fl-km   { grid-area: km; text-align: right; padding: 0 0.5rem; }
+    .fleet-table .fl-act  { grid-area: act; }
+    .fleet-table .fl-sup  { grid-area: sup; white-space: normal; }
+    .fleet-table .fl-sup > div { font-size: 0.875rem; font-weight: 600; }
+    .fleet-table .fl-part { grid-area: part; }
+    .fleet-table .fl-amt  { grid-area: amt; margin-top: 0.25rem; }
+
+    .fleet-table .particulars-text {
+      max-width: none;
+      min-height: 0;
+      font-size: 0.8125rem;
+      line-height: 1.45;
+    }
+    .fleet-table .particulars-text > div + div { margin-top: 0.125rem; }
+
+    .fleet-table .breakdown-text {
+      max-width: none;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 0.5rem;
+      padding: 0.375rem 0.625rem;
+    }
+    .fleet-table .breakdown-text > div > div { font-size: 0.8125rem; }
+    .fleet-table .breakdown-text .font-mono { white-space: nowrap; }
+
+    /* actions: hit-friendly buttons */
+    .fleet-table .fl-act > div { gap: 0.25rem; }
+    .fleet-table .fl-act button { padding: 0.375rem 0.5rem; font-size: 1rem; }
+
+    /* attachment row sits flush under its card */
+    .fleet-table tr.fl-attach { display: block; border-top-width: 0; padding: 0 0.5rem 0.5rem; }
+    .fleet-table tr.fl-attach > td { display: block; padding: 0; }
+  }
+
   /* Toggle Switch Style */
   .toggle-checkbox:checked {
     right: 0;

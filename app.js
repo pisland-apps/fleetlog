@@ -15,8 +15,8 @@ const DB_VERSION = 4;
 // and do NOT sync automatically — bump both together by hand on every
 // deploy. See the matching comment above CACHE_NAME in sw.js.
 // ---------------------------------------------------------------------
-const APP_VERSION = '1.9.19';
-const APP_VERSION_DATE = '2026-10-08';
+const APP_VERSION = '1.9.20';
+const APP_VERSION_DATE = '2026-11-16';
 
 // Populate the badge as soon as this script runs — deliberately not inside
 // the DOMContentLoaded handler further down, so it appears immediately and
@@ -843,12 +843,12 @@ class FleetApp {
       }
 
       return `
-        <tr class="hover:bg-gray-50 transition group fade-in">
-          <td class="px-3 py-2.5 align-top whitespace-nowrap">
+        <tr class="fl-row hover:bg-gray-50 transition group fade-in">
+          <td class="fl-date px-3 py-2.5 align-top whitespace-nowrap">
             <div class="font-medium text-slate-800 text-xs">${dateStr}</div>
             <span class="inline-block mt-0.5 px-1.5 py-0.5 text-[9px] font-bold rounded ${typeBadge.color}">${typeBadge.label}</span>
           </td>
-          <td class="px-3 py-2.5 text-slate-700 font-mono text-xs align-top whitespace-nowrap">
+          <td class="fl-km px-3 py-2.5 text-slate-700 font-mono text-xs align-top whitespace-nowrap">
             ${e.km != null ? this.fmt(e.km, 0) : '—'}
             ${(() => {
               if (e.type !== 'maintenance' || e.service == null || e.km == null || !prevKmById.has(e.id)) return '';
@@ -857,23 +857,23 @@ class FleetApp {
               return `<div class="text-[9px] text-gray-400 font-sans mt-0.5">${diff >= 0 ? '+' : ''}${this.fmt(diff, 0)} km</div>`;
             })()}
           </td>
-          <td class="px-3 py-2.5 align-top whitespace-nowrap">
+          <td class="fl-sup px-3 py-2.5 align-top whitespace-nowrap">
             <div class="text-slate-800 font-medium text-xs">${this.escape(e.supplier || '—')}</div>
           </td>
-          <td class="px-3 py-2.5 align-top">
+          <td class="fl-part px-3 py-2.5 align-top">
             <div class="particulars-text text-gray-600" title="${this.escape(e.particulars || '')}">${this.formatParticulars(e.particulars)}</div>
           </td>
-          <td class="px-3 py-2.5 align-top">
+          <td class="fl-amt px-3 py-2.5 align-top">
             <div class="breakdown-text">${this.buildBreakdown(e)}</div>
           </td>
-          <td class="print-col-actions px-2 py-2.5 text-center no-print align-top whitespace-nowrap">
+          <td class="fl-act print-col-actions px-2 py-2.5 text-center no-print align-top whitespace-nowrap">
             <div class="flex justify-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition">
               <button data-click="editEntry" data-click-args='[${e.id}]' class="p-1 text-amber-600 hover:bg-amber-50 rounded transition" title="Edit">✏️</button>
               <button data-click="confirmDeleteEntry" data-click-args='[${e.id}]' class="p-1 text-red-600 hover:bg-red-50 rounded transition" title="Delete">🗑️</button>
             </div>
           </td>
         </tr>${e.attachments && e.attachments.length ? `
-        <tr class="bg-slate-50/70">
+        <tr class="fl-attach bg-slate-50/70">
           <td colspan="6" class="px-3 pb-2 pt-0">
             <div class="ml-0 sm:ml-[19%] flex flex-wrap gap-x-3 gap-y-1">
               ${e.attachments.map((a, i) => `
