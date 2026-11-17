@@ -1,5 +1,5 @@
 const DB_NAME = 'FleetLogDB';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 // ---------------------------------------------------------------------
 // APP_VERSION / APP_VERSION_DATE — the human-readable label shown in the
@@ -15,7 +15,7 @@ const DB_VERSION = 4;
 // and do NOT sync automatically — bump both together by hand on every
 // deploy. See the matching comment above CACHE_NAME in sw.js.
 // ---------------------------------------------------------------------
-const APP_VERSION = '1.9.21';
+const APP_VERSION = '1.10.0';
 const APP_VERSION_DATE = '2026-11-17';
 
 // Populate the badge as soon as this script runs — deliberately not inside
@@ -160,7 +160,12 @@ class FleetApp {
     return new Promise((resolve, reject) => {
       const req = indexedDB.open(DB_NAME, DB_VERSION);
       req.onerror = () => reject(req.error);
-      req.onsuccess = () => { this.db = req.result; resolve(); };
+      req.onsuccess = () => {
+        this.db = req.result;
+        // v1.10.0: lets drive-sync.js notice every local data write (see there).
+        if (typeof this._driveInstallDbHook === 'function') this._driveInstallDbHook();
+        resolve();
+      };
       req.onupgradeneeded = (e) => {
         const db = e.target.result;
         if (!db.objectStoreNames.contains('vehicles')) {
@@ -173,6 +178,12 @@ class FleetApp {
         }
         if (!db.objectStoreNames.contains('config')) {
           db.createObjectStore('config', { keyPath: 'key' });
+        }
+        // v1.10.0: safety copies of this device's own records, taken just
+        // before a Google Drive download replaces unsynced local changes.
+        // Rows hold the already-encrypted records, nothing readable.
+        if (!db.objectStoreNames.contains('driveSnapshots')) {
+          db.createObjectStore('driveSnapshots', { keyPath: 'id', autoIncrement: true });
         }
       };
     });
@@ -348,7 +359,14 @@ class FleetApp {
     try {
       const newSalt = crypto.getRandomValues(new Uint8Array(16));
       const newKey = await CryptoEngine.deriveKey(passcode, newSalt, CryptoEngine.CURRENT_ITERATIONS);
-      await this._reencryptDataStore(newKey, newSalt, CryptoEngine.CURRENT_ITERATIONS);
+      // The data itself doesn't change here, only how it is encrypted, so
+      // it must not count as an "unsynced local change" for Google Drive.
+      this._driveSuppressDirty = true;
+      try {
+        await this._reencryptDataStore(newKey, newSalt, CryptoEngine.CURRENT_ITERATIONS);
+      } finally {
+        this._driveSuppressDirty = false;
+      }
     } catch (err) {
       console.error('PBKDF2 iteration upgrade failed (will retry on next unlock):', err);
     }
@@ -362,6 +380,19 @@ class FleetApp {
   // hardening above, and the user-initiated changePasscode flow below —
   // get this wrong and the app can't decrypt its own data on next load.
   async _reencryptDataStore(newKey, newSalt, newIterations) {
+    // v1.10.0: drive-sync.js must not read records + salt while they are
+    // being swapped to a new key (it would pair old ciphertext with a new salt).
+    this._rekeying = true;
+    try {
+      await this._reencryptDataStoreInner(newKey, newSalt, newIterations);
+    } finally {
+      this._rekeying = false;
+    }
+    // Local safety copies were encrypted under the old key — now unreadable.
+    if (typeof this._driveClearSnapshots === 'function') await this._driveClearSnapshots();
+  }
+
+  async _reencryptDataStoreInner(newKey, newSalt, newIterations) {
     const readTx = this.db.transaction(['vehicles', 'entries'], 'readonly');
     const vehiclesRaw = await new Promise((r, j) => {
       const q = readTx.objectStore('vehicles').getAll();
@@ -487,10 +518,12 @@ class FleetApp {
       this.renderEmpty();
     }
     document.getElementById('printDate').textContent = this.formatDisplayDate(this.localDateStr());
+    if (typeof this.driveOnUnlock === 'function') this.driveOnUnlock();
   }
 
   lockApp() {
     this.cryptoKey = null;
+    this._backupKeyCache = null;
     this.vehicles = [];
     this.entries = [];
     document.getElementById('appContainer').classList.add('hidden');
@@ -1648,6 +1681,7 @@ class FleetApp {
     const tx = this.db.transaction('config', 'readwrite');
     tx.objectStore('config').put({ key: 'currency', symbol });
     await new Promise((r, j) => { tx.oncomplete = r; tx.onerror = j; });
+    if (typeof this.driveMarkDirty === 'function') this.driveMarkDirty(); // currency travels with the Drive backup
     this.renderDashboard();
     this.renderEntries();
     this.renderVehicleInfo();
@@ -1815,76 +1849,112 @@ class FleetApp {
 
       // Decrypt/prepare everything under the CURRENT session's key BEFORE touching the
       // database, so a wrong passcode or bad file never wipes out existing data.
-      const newVehicles = [];
-      const newEntries = [];
+      const rows = await this._prepareBackupRows(data);
+      if (!rows) { this.toast('Import cancelled', 'error'); input.value = ''; return; }
 
-      if (data.isEncrypted) {
-        if (!data.salt) throw new Error('Backup is missing salt data and cannot be decrypted');
-
-        // Try the currently-unlocked session key first (covers re-importing a backup
-        // into the same install it came from). Only prompt if that doesn't work.
-        let backupKey = this.cryptoKey;
-        const sample = data.vehicles[0] || data.entries[0];
-        let keyOk = !sample;
-        if (sample) {
-          try { await CryptoEngine.decrypt(sample.payload, backupKey); keyOk = true; } catch (e) { keyOk = false; }
-        }
-
-        if (!keyOk) {
-          const backupPasscode = await this.promptForBackupPasscode();
-          if (!backupPasscode) { this.toast('Import cancelled', 'error'); input.value = ''; return; }
-          // data.iterations is absent on backups exported before v1.9.6 —
-          // deriveKey's default parameter (LEGACY_ITERATIONS) covers that
-          // case correctly since those backups were always created at 100k.
-          backupKey = await CryptoEngine.deriveKey(backupPasscode, new Uint8Array(data.salt), data.iterations || CryptoEngine.LEGACY_ITERATIONS);
-          if (sample) {
-            try { await CryptoEngine.decrypt(sample.payload, backupKey); } catch (e) { throw new Error('Incorrect passcode for this backup'); }
-          }
-        }
-
-        for (const v of data.vehicles) {
-          const decrypted = await CryptoEngine.decrypt(v.payload, backupKey);
-          newVehicles.push({ id: v.id, payload: await CryptoEngine.encrypt(decrypted, this.cryptoKey) });
-        }
-        for (const e of data.entries) {
-          const decrypted = await CryptoEngine.decrypt(e.payload, backupKey);
-          newEntries.push({ id: e.id, vehicleId: e.vehicleId, payload: await CryptoEngine.encrypt(decrypted, this.cryptoKey) });
-        }
-      } else {
-        for (const v of data.vehicles) {
-          const { id, ...rest } = v;
-          newVehicles.push({ id, payload: await CryptoEngine.encrypt(rest, this.cryptoKey) });
-        }
-        for (const e of data.entries) {
-          const { id, vehicleId, ...rest } = e;
-          newEntries.push({ id, vehicleId: vehicleId || this.currentVehicleId, payload: await CryptoEngine.encrypt(rest, this.cryptoKey) });
-        }
-      }
-
-      const tx1 = this.db.transaction(['vehicles', 'entries'], 'readwrite');
-      tx1.objectStore('vehicles').clear();
-      tx1.objectStore('entries').clear();
-      await new Promise((r, j) => { tx1.oncomplete = r; tx1.onerror = () => j(tx1.error); });
-
-      const tx2 = this.db.transaction(['vehicles', 'entries'], 'readwrite');
-      const vStore = tx2.objectStore('vehicles');
-      const eStore = tx2.objectStore('entries');
-      for (const v of newVehicles) {
-        if (v.id != null) vStore.add({ id: v.id, payload: v.payload }); else vStore.add({ payload: v.payload });
-      }
-      for (const e of newEntries) {
-        if (e.id != null) eStore.add({ id: e.id, vehicleId: e.vehicleId, payload: e.payload }); else eStore.add({ vehicleId: e.vehicleId, payload: e.payload });
-      }
-      await new Promise((r, j) => { tx2.oncomplete = r; tx2.onerror = () => j(tx2.error); });
-
-      await this.loadVehicles();
-      if (this.vehicles.length > 0) await this.selectVehicle(this.vehicles[0].id);
-      else this.renderEmpty();
+      await this._replaceDataStore(rows);
+      await this._reloadAfterReplace();
       this.toast('Import successful');
     } catch (err) {
       this.toast('Import failed: ' + err.message, 'error');
     }
     input.value = '';
+  }
+
+  // Turns a parsed backup object (encrypted or plain, from a file or from
+  // Google Drive) into rows ready to store under THIS session's key.
+  // Returns { newVehicles, newEntries }, or null if the person cancelled the
+  // backup-passcode prompt. Throws on a wrong passcode / corrupt data. Writes
+  // nothing to the database. (v1.10.0: split out of importData() so the
+  // Google Drive download can use exactly the same path as a file import.)
+  async _prepareBackupRows(data, opts = {}) {
+    const newVehicles = [];
+    const newEntries = [];
+
+    if (data.isEncrypted) {
+      if (!data.salt) throw new Error('Backup is missing salt data and cannot be decrypted');
+
+      // Try the currently-unlocked session key first (covers re-importing a backup
+      // into the same install it came from). Only prompt if that doesn't work.
+      let backupKey = this.cryptoKey;
+      const sample = data.vehicles[0] || data.entries[0];
+      let keyOk = !sample;
+      if (sample) {
+        try { await CryptoEngine.decrypt(sample.payload, backupKey); keyOk = true; } catch (e) { keyOk = false; }
+      }
+
+      // v1.10.0: a key already derived earlier in this unlocked session for
+      // the same salt/iterations (e.g. the other device's backup) is reused,
+      // so repeated Drive downloads don't ask for the passcode every time.
+      const cacheId = Array.from(data.salt).join(',') + '|' + (data.iterations || CryptoEngine.LEGACY_ITERATIONS);
+      if (!keyOk && this._backupKeyCache && this._backupKeyCache.id === cacheId && sample) {
+        try { await CryptoEngine.decrypt(sample.payload, this._backupKeyCache.key); backupKey = this._backupKeyCache.key; keyOk = true; } catch (e) { keyOk = false; }
+      }
+
+      if (!keyOk) {
+        const backupPasscode = await this.promptForBackupPasscode(opts.passcodeMessage);
+        if (!backupPasscode) return null;
+        // data.iterations is absent on backups exported before v1.9.6 —
+        // deriveKey's default parameter (LEGACY_ITERATIONS) covers that
+        // case correctly since those backups were always created at 100k.
+        backupKey = await CryptoEngine.deriveKey(backupPasscode, new Uint8Array(data.salt), data.iterations || CryptoEngine.LEGACY_ITERATIONS);
+        if (sample) {
+          try { await CryptoEngine.decrypt(sample.payload, backupKey); } catch (e) { throw new Error('Incorrect passcode for this backup'); }
+        }
+        this._backupKeyCache = { id: cacheId, key: backupKey };
+      }
+
+      for (const v of data.vehicles) {
+        const decrypted = await CryptoEngine.decrypt(v.payload, backupKey);
+        newVehicles.push({ id: v.id, payload: await CryptoEngine.encrypt(decrypted, this.cryptoKey) });
+      }
+      for (const e of data.entries) {
+        const decrypted = await CryptoEngine.decrypt(e.payload, backupKey);
+        newEntries.push({ id: e.id, vehicleId: e.vehicleId, payload: await CryptoEngine.encrypt(decrypted, this.cryptoKey) });
+      }
+    } else {
+      for (const v of data.vehicles) {
+        const { id, ...rest } = v;
+        newVehicles.push({ id, payload: await CryptoEngine.encrypt(rest, this.cryptoKey) });
+      }
+      for (const e of data.entries) {
+        const { id, vehicleId, ...rest } = e;
+        newEntries.push({ id, vehicleId: vehicleId || this.currentVehicleId, payload: await CryptoEngine.encrypt(rest, this.cryptoKey) });
+      }
+    }
+    return { newVehicles, newEntries };
+  }
+
+  // Replaces ALL vehicle + entry records with the prepared rows.
+  async _replaceDataStore({ newVehicles, newEntries }) {
+    const tx1 = this.db.transaction(['vehicles', 'entries'], 'readwrite');
+    tx1.objectStore('vehicles').clear();
+    tx1.objectStore('entries').clear();
+    await new Promise((r, j) => { tx1.oncomplete = r; tx1.onerror = () => j(tx1.error); });
+
+    const tx2 = this.db.transaction(['vehicles', 'entries'], 'readwrite');
+    const vStore = tx2.objectStore('vehicles');
+    const eStore = tx2.objectStore('entries');
+    for (const v of newVehicles) {
+      if (v.id != null) vStore.add({ id: v.id, payload: v.payload }); else vStore.add({ payload: v.payload });
+    }
+    for (const e of newEntries) {
+      if (e.id != null) eStore.add({ id: e.id, vehicleId: e.vehicleId, payload: e.payload }); else eStore.add({ vehicleId: e.vehicleId, payload: e.payload });
+    }
+    await new Promise((r, j) => { tx2.oncomplete = r; tx2.onerror = () => j(tx2.error); });
+  }
+
+  // After the records were replaced: reload them and refresh the screen,
+  // staying on the vehicle that was open if it still exists.
+  async _reloadAfterReplace() {
+    const keepId = this.currentVehicleId;
+    await this.loadVehicles();
+    if (this.vehicles.length > 0) {
+      const stay = keepId != null && this.vehicles.some(v => v.id === keepId);
+      await this.selectVehicle(stay ? keepId : this.vehicles[0].id);
+    } else {
+      this.renderEmpty();
+    }
   }
 
   // ==================== BACKUP PASSCODE MODAL ====================
@@ -1896,9 +1966,14 @@ class FleetApp {
   // submit and cancel. Returns a Promise<string|null>, resolved by
   // submitBackupPasscode()/cancelBackupPasscode() below.
 
-  promptForBackupPasscode() {
+  promptForBackupPasscode(message) {
     return new Promise((resolve) => {
       this._backupPasscodeResolve = resolve;
+      const msgEl = document.getElementById('backupPasscodeMsg');
+      if (msgEl) {
+        if (!this._backupPasscodeDefaultMsg) this._backupPasscodeDefaultMsg = msgEl.textContent;
+        msgEl.textContent = message || this._backupPasscodeDefaultMsg;
+      }
       const input = document.getElementById('backupPasscodeInput');
       if (input) input.value = '';
       this.openModal('backupPasscodeModal');
@@ -2027,6 +2102,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('confirmModal').addEventListener('click', e => { if (e.target === e.currentTarget) app.closeModal('confirmModal'); });
   document.getElementById('attachmentViewerModal').addEventListener('click', e => { if (e.target === e.currentTarget) app.closeModal('attachmentViewerModal'); });
   document.getElementById('changePasscodeModal').addEventListener('click', e => { if (e.target === e.currentTarget) app.closeModal('changePasscodeModal'); });
+  document.getElementById('driveModal').addEventListener('click', e => { if (e.target === e.currentTarget) app.closeModal('driveModal'); });
   // Backdrop click resolves the pending promptForBackupPasscode() promise
   // with null, same as the Cancel button — not a plain closeModal(), so
   // whatever's awaiting the passcode doesn't hang forever.
@@ -2041,6 +2117,7 @@ document.addEventListener('DOMContentLoaded', () => {
       app.closeModal('confirmModal');
       app.closeModal('attachmentViewerModal');
       app.closeModal('changePasscodeModal');
+      app.closeModal('driveModal');
       app.cancelBackupPasscode();
     }
   });

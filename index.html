@@ -27,6 +27,17 @@
     also ships plain-JavaScript *_nowasm_fallback.js decoders, so scanner
     PDFs still show if a host's CSP header ever lacks this keyword; the CSP
     itself was not changed.)
+  - v1.10.0 (Google Drive sync, see drive-sync.js): the ONLY third-party
+    origins this page may now talk to are Google's:
+      script-src  https://accounts.google.com  -> Google Identity Services
+                  (sign-in script). It is NOT in this page's markup: drive-sync.js
+                  adds it only once you press "Connect Google Drive" (or when
+                  Drive was already connected on this device).
+      connect-src https://www.googleapis.com   -> the Drive API (hidden app-data
+                  folder only), https://oauth2.googleapis.com / accounts.google.com
+                  -> sign-in.
+      frame-src   https://accounts.google.com  -> sign-in.
+    Nothing else changed: still no inline script, no other host.
   - frame-ancestors CANNOT be set here — it's an HTTP-header-only CSP
     directive; <meta http-equiv="Content-Security-Policy"> silently
     ignores it. On GitHub Pages (no custom headers) there is currently
@@ -37,7 +48,7 @@
     headers this <meta> tag can't express. Keep the two copies in sync
     by hand — nothing enforces they match.
 -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' blob:; manifest-src 'self'; worker-src 'self'; connect-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval' https://accounts.google.com; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' blob:; manifest-src 'self'; worker-src 'self'; connect-src 'self' https://accounts.google.com https://www.googleapis.com https://oauth2.googleapis.com; frame-src https://accounts.google.com; base-uri 'self'; form-action 'self'; object-src 'none'">
 <meta name="theme-color" content="#1e293b">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -186,6 +197,7 @@
              above. sm:contents dissolves this wrapper on desktop so the
              buttons fall back in line with everything else, unchanged. -->
         <div class="flex gap-2 sm:contents">
+          <button id="driveBtn" data-click="showDriveModal" class="relative flex-1 sm:flex-none text-center px-3 py-2 sm:py-1.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition" title="Google Drive sync">☁️<span id="driveDot" class="hidden absolute top-1 right-1 w-2 h-2 rounded-full" style="background:#94a3b8"></span></button>
           <button data-click="showChangePasscodeModal" class="flex-1 sm:flex-none text-center px-3 py-2 sm:py-1.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition" title="Change Passcode">🔑</button>
           <button data-click="lockApp" class="flex-1 sm:flex-none text-center px-3 py-2 sm:py-1.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition text-amber-400" title="Lock App">🔒</button>
         </div>
@@ -584,6 +596,91 @@
   </div>
 </div>
 
+<!-- Google Drive Sync Modal (v1.10.0) — logic in drive-sync.js.
+     Placed BEFORE the backup-passcode modal so that one stacks on top when a
+     Drive download needs the other device's passcode. -->
+<div id="driveModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50 backdrop-blur-sm no-print">
+  <div class="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 max-h-[90vh] flex flex-col modal-enter">
+    <div class="px-6 py-4 border-b border-gray-200 bg-slate-50 flex items-center justify-between flex-shrink-0">
+      <h3 class="text-lg font-semibold text-slate-800">☁️ Google Drive Sync</h3>
+      <button data-click="closeModal" data-click-args='["driveModal"]' class="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+    </div>
+    <div class="p-6 space-y-4 overflow-y-auto flex-1 min-h-0">
+
+      <!-- not connected -->
+      <div id="driveNotConnected" class="space-y-3">
+        <p class="text-sm text-gray-600">Keep an encrypted copy of your FleetLog data in your own Google Drive and share it between your phone and PC.</p>
+        <ul class="text-xs text-gray-500 list-disc pl-5 space-y-1">
+          <li>One device is the <b>primary</b> and uploads automatically after every change.</li>
+          <li>The other device downloads / uploads by hand when something changed.</li>
+          <li>Only a hidden app folder of your Drive is used, and the data stays encrypted with your passcode — Google cannot read it.</li>
+        </ul>
+        <button type="button" data-click="driveConnect" data-click-args='["@this"]' class="w-full px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-900 font-semibold rounded-lg transition">Connect Google Drive</button>
+      </div>
+
+      <!-- connected -->
+      <div id="driveConnected" class="hidden space-y-4">
+        <div class="text-xs text-gray-500">Connected as <span id="driveEmail" class="font-medium text-slate-700 break-all"></span></div>
+
+        <div class="p-3 bg-gray-50 rounded-xl border border-gray-200 space-y-1.5">
+          <div class="text-sm font-medium" id="driveStatusText"></div>
+          <div class="text-xs text-gray-600" id="driveRoleText"></div>
+        </div>
+
+        <!-- newer data on Drive -->
+        <div id="driveBannerNewer" class="hidden p-3 rounded-xl border border-amber-300 bg-amber-50 space-y-2">
+          <div class="text-xs text-amber-900">Another device uploaded newer data. Download it to see those changes here.</div>
+          <button type="button" data-click="driveDownloadNow" data-click-args='["@this"]' class="w-full px-3 py-2 bg-amber-500 hover:bg-amber-600 text-slate-900 font-semibold rounded-lg text-sm transition">⬇ Download from Drive</button>
+        </div>
+
+        <!-- conflict -->
+        <div id="driveBannerConflict" class="hidden p-3 rounded-xl border border-red-300 bg-red-50 space-y-2">
+          <div class="text-xs text-red-900" id="driveConflictText"></div>
+          <div class="flex gap-2">
+            <button type="button" data-click="driveKeepThisDevice" data-click-args='["@this"]' class="flex-1 px-3 py-2 border border-red-300 bg-white text-red-800 rounded-lg text-xs font-semibold hover:bg-red-100 transition">Keep this device<br><span class="font-normal">(overwrite Drive)</span></button>
+            <button type="button" data-click="driveUseDriveCopy" data-click-args='["@this"]' class="flex-1 px-3 py-2 bg-amber-500 hover:bg-amber-600 text-slate-900 rounded-lg text-xs font-semibold transition">Use Drive copy<br><span class="font-normal">(download)</span></button>
+          </div>
+        </div>
+
+        <button id="driveReconnectBtn" type="button" data-click="driveConnect" data-click-args='["@this"]' class="hidden w-full px-3 py-2 bg-amber-500 hover:bg-amber-600 text-slate-900 font-semibold rounded-lg text-sm transition">Reconnect Google</button>
+
+        <div>
+          <label class="block text-xs font-medium text-gray-500 mb-1" for="driveDeviceName">This device's name</label>
+          <input type="text" id="driveDeviceName" maxlength="40" data-change="driveSaveDeviceName" data-change-args='["@this"]' class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none" placeholder="e.g. Phone or PC">
+        </div>
+
+        <div id="driveAutoRow" class="hidden flex items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-200">
+          <div>
+            <span class="font-medium text-sm text-slate-800 block">Auto-upload</span>
+            <span class="text-xs text-gray-500 block mt-0.5">Upload a few seconds after every change</span>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer">
+            <input type="checkbox" id="driveAutoSyncToggle" class="sr-only peer" checked data-change="driveToggleAutoSync" data-change-args='["@this"]'>
+            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500"></div>
+          </label>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2">
+          <button type="button" data-click="driveUploadNow" data-click-args='["@this"]' class="px-3 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm transition">⬆ Upload to Drive</button>
+          <button type="button" data-click="driveDownloadNow" data-click-args='["@this"]' class="px-3 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm transition">⬇ Download from Drive</button>
+          <button type="button" data-click="driveCheckNow" data-click-args='["@this"]' class="px-3 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm hover:bg-gray-50 transition">↻ Check now</button>
+          <button id="driveMakePrimaryBtn" type="button" data-click="driveMakePrimary" data-click-args='["@this"]' class="hidden px-3 py-2 border border-amber-400 text-amber-800 bg-amber-50 rounded-lg text-sm hover:bg-amber-100 transition">⭐ Make this primary</button>
+        </div>
+
+        <div id="driveSnapshotsSection" class="hidden">
+          <div class="text-xs font-medium text-gray-500 mb-1">Local safety copies</div>
+          <p class="text-[11px] text-gray-400 mb-1">Made automatically when a download replaced changes that were not uploaded yet. Newest 3 are kept.</p>
+          <div id="driveSnapshotsList"></div>
+        </div>
+
+        <div class="pt-1 text-right">
+          <button type="button" data-click="driveDisconnect" class="text-xs text-red-600 hover:underline">Disconnect Google Drive</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Backup Passcode Modal — replaces the old native prompt() used when
      importing a backup encrypted with a different passcode/device. A
      native prompt() can't be styled or reliably cleared, and its value
@@ -596,7 +693,7 @@
       <h3 class="text-lg font-semibold text-slate-800">Backup Passcode Needed</h3>
     </div>
     <form data-submit="submitBackupPasscode" data-submit-args='["@event"]' class="p-6 space-y-3">
-      <p class="text-sm text-gray-500">This backup was encrypted with a different passcode or on a different device. Enter the passcode that was used to create it.</p>
+      <p id="backupPasscodeMsg" class="text-sm text-gray-500">This backup was encrypted with a different passcode or on a different device. Enter the passcode that was used to create it.</p>
       <input type="password" id="backupPasscodeInput" class="w-full text-center tracking-widest text-lg px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition" placeholder="••••••••" autofocus>
       <div class="flex gap-3 pt-1">
         <button type="button" data-click="cancelBackupPasscode" class="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition">Cancel</button>
@@ -607,5 +704,7 @@
 </div>
 
 <script src="app.js" defer></script>
+<!-- v1.10.0: Google Drive sync. Must come after app.js (extends FleetApp). -->
+<script src="drive-sync.js" defer></script>
 </body>
 </html>

@@ -211,6 +211,17 @@ This mirrors the attachment viewer in the companion Wealth Planner app.
 
 ## 📝 Changelog
 
+### v1.10.0 — Google Drive Sync (primary device + manual other device)
+- ☁️ New **Google Drive Sync** button in the header. One encrypted backup file (`fleetlog-backup.json`, the same format as *Export JSON*) lives in a hidden app-data folder of your own Google Drive (scope `drive.appdata`; the app can't see any other Drive file). Google cannot read it.
+- **Primary device** (PC *or* phone, switchable with "Make this primary"): uploads automatically ~4 s after every change. **The other device** never auto-uploads: use **⬇ Download from Drive** / **⬆ Upload to Drive** when something changed; the ☁️ dot turns amber and a toast appears on unlock when Drive has newer data.
+- Safety: auto-upload never overwrites a Drive copy another device changed (it pauses and asks: *Keep this device* / *Use Drive copy*). A download that would replace unsynced changes first saves a **local safety copy** (newest 3, restorable in the ☁️ dialog). Currency travels with the backup.
+- Passcode: uploads need no passcode. Downloading data made on the other device asks for that device's passcode once per unlock (normally the same one); changing a passcode re-uploads automatically on the primary.
+- Mechanics: every vehicle/entry write is detected at the IndexedDB layer (new `drive-sync.js`); records are uploaded still-encrypted (resumable upload, multipart fallback); Drive state is kept per device in `localStorage` (`fleetlogDrive.*`), not in backups. IndexedDB `DB_VERSION` 4 → 5 (new `driveSnapshots` store).
+- **Security/CSP change:** `script-src` gains `https://accounts.google.com` (the sign-in script is only loaded after you connect), `connect-src` gains `www.googleapis.com`, `oauth2.googleapis.com`, `accounts.google.com`, and `frame-src https://accounts.google.com`. `index.html` and `_headers` updated (`_headers` also gets `Cross-Origin-Opener-Policy: same-origin-allow-popups` for the sign-in popup).
+- **Service worker fix:** `sw.js` now ignores cross-origin requests; before, a Drive GET would have been served stale from cache.
+- **One-time setup:** the OAuth client (same as Ledger's) must list FleetLog's web address under *Authorized JavaScript origins* in Google Cloud Console (if it is on the same `https://<user>.github.io` as Ledger, it already does).
+- Changes: `app.js` (import split into `_prepareBackupRows` / `_replaceDataStore` / `_reloadAfterReplace`, hooks, version), new `drive-sync.js`, `index.html`, `sw.js`, `_headers`, `README.md`. **Deploy:** upload all of these together.
+
 ### v1.9.21 — Phone Back Button No Longer Jumps to the Top After Closing the Image Viewer
 - 🐛 **Fixed:** on a phone, opening an attachment image and pressing the back button closed the viewer but scrolled the page to the top. On PC, Esc kept your place. Cause: the back button pops the history "trap" entry, and the mobile browser's automatic scroll restoration then jumped to the scroll offset saved for the older entry (the top).
 - Fix: `history.scrollRestoration = 'manual'` at boot, plus the page scroll position is remembered when the first modal opens and restored after a back-button close. This applies to every modal (vehicle / entry / loan forms, viewer), not only images. The ×/Close/backdrop/Esc paths were not affected and are unchanged.

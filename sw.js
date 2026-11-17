@@ -9,7 +9,7 @@
 // — bump both together by hand on every deploy. See the matching comment
 // above APP_VERSION near the top of app.js.
 // ---------------------------------------------------------------------
-const CACHE_NAME = 'fleetlog-pwa-v1.9.21';
+const CACHE_NAME = 'fleetlog-pwa-v1.10.0';
 
 // As of v1.9.3 every asset (Tailwind, pdf.js + worker, Inter webfont) is
 // vendored locally under ./vendor and ./fonts instead of being fetched
@@ -22,6 +22,7 @@ const CACHE_NAME = 'fleetlog-pwa-v1.9.21';
 const STATIC_ASSETS = [
   './',
   './app.js',
+  './drive-sync.js',
   './pdf-worker-init.js',
   './styles.css',
   './manifest.json',
@@ -100,6 +101,14 @@ self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET' || !event.request.url.startsWith('http')) {
     return;
   }
+
+  // v1.10.0: only same-origin requests are handled here. Google Drive sync
+  // (drive-sync.js) makes cross-origin GETs to www.googleapis.com (file list,
+  // file download, with an Authorization header) and loads the Google sign-in
+  // script. Without this line the stale-while-revalidate branch below would
+  // serve an OLD cached Drive answer first (and store Drive responses in the
+  // cache), so "has Drive changed?" would never see a change.
+  if (new URL(event.request.url).origin !== self.location.origin) return;
 
   // Navigations (address-bar loads, links, bookmarks, an installed shortcut
   // relaunching) always resolve through the canonical './' cache entry,
