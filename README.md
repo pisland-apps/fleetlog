@@ -211,6 +211,11 @@ This mirrors the attachment viewer in the companion Wealth Planner app.
 
 ## 📝 Changelog
 
+### v1.9.21 — Phone Back Button No Longer Jumps to the Top After Closing the Image Viewer
+- 🐛 **Fixed:** on a phone, opening an attachment image and pressing the back button closed the viewer but scrolled the page to the top. On PC, Esc kept your place. Cause: the back button pops the history "trap" entry, and the mobile browser's automatic scroll restoration then jumped to the scroll offset saved for the older entry (the top).
+- Fix: `history.scrollRestoration = 'manual'` at boot, plus the page scroll position is remembered when the first modal opens and restored after a back-button close. This applies to every modal (vehicle / entry / loan forms, viewer), not only images. The ×/Close/backdrop/Esc paths were not affected and are unchanged.
+- Changes: `app.js` (`openModal`, popstate listener, version), `sw.js` (`CACHE_NAME`), `README.md`. No data-format or backup change. **Deploy:** upload `app.js`, `sw.js`, `README.md`.
+
 ### v1.9.20 — Phone Card Layout for the Maintenance & Depreciation Log
 - 📱 **On phones (screen width ≤ 640 px) each log row is now a stacked card** instead of a wide table you had to scroll sideways. Top line: date + type badge, KM, ✏️/🗑️; then Supplier (bold); then Particulars at full width; then the amounts in a light box with the label on the left and the figure on the right. Amounts no longer break as "RM" / "1,099.90" on two lines. Attachments sit directly under their card.
 - The column headers are hidden on phones except **Date ↕**, which still sorts. Tablets, desktop and **printing are unchanged** (screen-only media query).

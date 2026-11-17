@@ -15,8 +15,8 @@ const DB_VERSION = 4;
 // and do NOT sync automatically — bump both together by hand on every
 // deploy. See the matching comment above CACHE_NAME in sw.js.
 // ---------------------------------------------------------------------
-const APP_VERSION = '1.9.20';
-const APP_VERSION_DATE = '2026-11-16';
+const APP_VERSION = '1.9.21';
+const APP_VERSION_DATE = '2026-11-17';
 
 // Populate the badge as soon as this script runs — deliberately not inside
 // the DOMContentLoaded handler further down, so it appears immediately and
@@ -1955,6 +1955,9 @@ class FleetApp {
 
   openModal(id) {
     const el = document.getElementById(id);
+    // Remember where the page was scrolled so a phone back-button close can
+    // put it back exactly there (see the popstate listener).
+    if (this.modalStack.length === 0) this.scrollBeforeModal = window.scrollY;
     el.classList.remove('hidden');
     el.classList.add('flex');
     this.modalStack.push(id);
@@ -2058,12 +2061,27 @@ document.addEventListener('DOMContentLoaded', () => {
   // if a modal was open we close it and push exactly one fresh trap entry
   // to re-arm for the next back press — otherwise we push nothing and let
   // the back navigation proceed normally (exits/minimizes the app).
+  //
+  // Scroll position: when a back press pops the trap entry, mobile browsers
+  // (auto scroll restoration) jump the page to the scroll offset saved for
+  // the older entry — which is the top of the page — so after closing the
+  // image viewer you landed back at the top. Desktop Esc never touches
+  // history, so it was fine. Fix: turn automatic restoration off, and also
+  // put the page back to where it was when the first modal was opened.
+  if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
   history.pushState({ fleetlogTrap: true }, '');
   window.addEventListener('popstate', () => {
     if (app.modalStack.length > 0) {
       const topId = app.modalStack[app.modalStack.length - 1];
       app.closeModal(topId);
       history.pushState({ fleetlogTrap: true }, '');
+      if (app.modalStack.length === 0 && typeof app.scrollBeforeModal === 'number') {
+        const y = app.scrollBeforeModal;
+        const restore = () => { if (Math.abs(window.scrollY - y) > 1) window.scrollTo(0, y); };
+        restore();
+        requestAnimationFrame(restore);
+        setTimeout(restore, 120);
+      }
     }
   });
 });
