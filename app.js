@@ -15,7 +15,7 @@ const DB_VERSION = 5;
 // and do NOT sync automatically — bump both together by hand on every
 // deploy. See the matching comment above CACHE_NAME in sw.js.
 // ---------------------------------------------------------------------
-const APP_VERSION = '1.10.1';
+const APP_VERSION = '1.10.2';
 const APP_VERSION_DATE = '2026-11-18';
 
 // Populate the badge as soon as this script runs — deliberately not inside
@@ -2141,7 +2141,7 @@ class FleetApp {
   toast(msg, type = 'success') {
     const t = document.getElementById('toast');
     t.textContent = msg;
-    t.className = `fixed bottom-6 right-6 px-4 py-3 rounded-lg shadow-lg transform transition-all duration-300 z-50 no-print ${type === 'error' ? 'bg-red-600 text-white' : 'bg-slate-800 text-white'}`;
+    t.className = `fixed bottom-6 right-6 px-4 py-3 rounded-lg shadow-lg transform transition-all duration-300 z-[300] pointer-events-none no-print ${type === 'error' ? 'bg-red-600 text-white' : 'bg-slate-800 text-white'}`;
     t.style.transform = 'translateY(0)';
     t.style.opacity = '1';
     setTimeout(() => { t.style.transform = 'translateY(20px)'; t.style.opacity = '0'; }, 3000);
