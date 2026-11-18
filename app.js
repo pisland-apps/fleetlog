@@ -15,7 +15,7 @@ const DB_VERSION = 5;
 // and do NOT sync automatically — bump both together by hand on every
 // deploy. See the matching comment above CACHE_NAME in sw.js.
 // ---------------------------------------------------------------------
-const APP_VERSION = '1.10.6';
+const APP_VERSION = '1.10.7';
 const APP_VERSION_DATE = '2026-11-18';
 
 // Populate the badge as soon as this script runs — deliberately not inside
@@ -842,7 +842,7 @@ class FleetApp {
         since.push(mo >= 12 ? Math.floor(mo / 12) + ' yr' + (mo % 12 ? ' ' + (mo % 12) + ' mo' : '') : mo + ' mo');
       }
       battHTML = `<div class="text-xs text-gray-400 mt-1">🔋 Battery: ${this.formatDisplayDate(batt.date)}${hasKm ? ' · ' + this.fmt(bk, 0) + ' km' : ''}</div>`
-        + (since.length ? `<div class="text-xs text-gray-400">since: ${since.join(' · ')}</div>` : '');
+        + (since.length ? `<div class="text-xs text-gray-400">since: ${since.reverse().join(' · ')}</div>` : '');
     }
 
     const ivItems = (vehicle.initialValueBreakdown || []).filter(i => i.label || i.amount || i.date);
@@ -931,7 +931,7 @@ class FleetApp {
     empty.classList.add('hidden');
 
     const chronoKm = this.entries
-      .filter(e => e.type === 'maintenance' && e.service != null && e.km != null && e.km !== '' && !isNaN(parseFloat(e.km)))
+      .filter(e => this.countsAsServiceInterval(e))
       .slice()
       .sort((a, b) => {
         const da = a.date ? new Date(a.date).getTime() : 0;
@@ -970,7 +970,7 @@ class FleetApp {
           <td class="fl-km px-3 py-2.5 text-slate-700 font-mono text-xs align-top whitespace-nowrap">
             ${e.km != null ? this.fmt(e.km, 0) : '—'}
             ${(() => {
-              if (e.type !== 'maintenance' || e.service == null || e.km == null || !prevKmById.has(e.id)) return '';
+              if (!this.countsAsServiceInterval(e) || !prevKmById.has(e.id)) return '';
               const diff = parseFloat(e.km) - prevKmById.get(e.id);
               if (isNaN(diff)) return '';
               return `<div class="text-[9px] text-gray-400 font-sans mt-0.5">${diff >= 0 ? '+' : ''}${this.fmt(diff, 0)} km</div>`;
@@ -1620,6 +1620,16 @@ class FleetApp {
     });
   }
 
+  // KM interval shown under the KM column. An entry counts when it is a
+  // maintenance entry with a KM reading AND the "Service" box is ticked.
+  // Entries saved before v1.10.7 have no flag (undefined): they keep the old
+  // rule (a Service amount is present) until they are edited and saved.
+  countsAsServiceInterval(e) {
+    if (e.type !== 'maintenance' || e.km == null || e.km === '' || isNaN(parseFloat(e.km))) return false;
+    if (e.serviceInterval === undefined) return e.service != null;
+    return !!e.serviceInterval;
+  }
+
   showAddEntry(type) {
     this.entryAttachments = [];
     this.renderAttachmentChips('entry');
@@ -1636,6 +1646,7 @@ class FleetApp {
 
     document.getElementById('batteryRow').classList.toggle('hidden', type !== 'maintenance');
     document.getElementById('entryBattery').checked = false;
+    document.getElementById('entryServiceInt').checked = false;
     document.getElementById('entryDate').value = this.localDateStr();
     document.getElementById('entryKm').value = '';
     document.getElementById('entrySupplier').value = '';
@@ -1671,6 +1682,7 @@ class FleetApp {
 
     document.getElementById('batteryRow').classList.toggle('hidden', (e.type || 'maintenance') !== 'maintenance');
     document.getElementById('entryBattery').checked = !!e.batteryReplaced;
+    document.getElementById('entryServiceInt').checked = this.countsAsServiceInterval(e);
     document.getElementById('entryDate').value = e.date || '';
     document.getElementById('entryKm').value = e.km != null ? e.km : '';
     document.getElementById('entrySupplier').value = e.supplier || '';
@@ -1702,6 +1714,7 @@ class FleetApp {
       supplier: document.getElementById('entrySupplier').value.trim(),
       particulars: document.getElementById('entryParticulars').value.trim(),
       batteryReplaced: type === 'maintenance' && document.getElementById('entryBattery').checked,
+      serviceInterval: type === 'maintenance' && document.getElementById('entryServiceInt').checked,
       cost: document.getElementById('entryCost').value !== '' ? parseFloat(document.getElementById('entryCost').value) : null,
       part: document.getElementById('entryPart').value !== '' ? parseFloat(document.getElementById('entryPart').value) : null,
       service: document.getElementById('entryService').value !== '' ? parseFloat(document.getElementById('entryService').value) : null,
