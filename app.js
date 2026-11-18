@@ -15,7 +15,7 @@ const DB_VERSION = 5;
 // and do NOT sync automatically — bump both together by hand on every
 // deploy. See the matching comment above CACHE_NAME in sw.js.
 // ---------------------------------------------------------------------
-const APP_VERSION = '1.10.4';
+const APP_VERSION = '1.10.5';
 const APP_VERSION_DATE = '2026-11-18';
 
 // Populate the badge as soon as this script runs — deliberately not inside
@@ -701,6 +701,14 @@ class FleetApp {
     m.classList.toggle('grid');
   }
 
+  toggleInitialBreakdown(btn) {
+    this._initOpen = !this._initOpen;
+    const box = document.getElementById('initialBreakdown');
+    if (box) box.classList.toggle('hidden', !this._initOpen);
+    const arrow = btn && btn.querySelector('.iv-arrow');
+    if (arrow) arrow.textContent = this._initOpen ? '▴' : '▾';
+  }
+
   toggleSpentBreakdown(btn) {
     this._spentOpen = !this._spentOpen;
     const box = document.getElementById('spentBreakdown');
@@ -709,6 +717,11 @@ class FleetApp {
   }
 
   showVehicleTooltip(card, vehicleId) {
+    // Hover-only: on phones/tablets without a hover-capable pointer a tap
+    // would pop this open and leave it covering the page. The same info is
+    // available there via the expandable Initial Value row in the Book
+    // Value card (toggleInitialBreakdown).
+    if (window.matchMedia && !window.matchMedia('(hover: hover)').matches) return;
     const v = this.vehicles.find(x => x.id === vehicleId);
     if (!v) return;
 
@@ -809,6 +822,17 @@ class FleetApp {
     });
     const bookValue = (vehicle.initialValue || 0) - totalDepreciation;
 
+    const ivItems = (vehicle.initialValueBreakdown || []).filter(i => i.label || i.amount || i.date);
+    const ivOpen = !!this._initOpen && ivItems.length > 0;
+    const ivRowsHTML = ivItems.map(i => {
+      const d = this.formatDisplayDate(i.date);
+      const text = [d !== '-' ? d : '', i.label].filter(Boolean).join(' - ');
+      return `<div class="flex justify-between gap-3"><span>${this.escape(text || 'Item')}</span><span class="font-medium text-slate-600 flex-shrink-0">${this.cur()}${this.fmt(i.amount || 0)}</span></div>`;
+    }).join('');
+    const ivLabel = ivItems.length > 0
+      ? `<button type="button" data-click="toggleInitialBreakdown" data-click-args='["@this"]' class="text-left">Initial Value: <span class="iv-arrow no-print">${ivOpen ? '▴' : '▾'}</span></button>`
+      : '<span>Initial Value:</span>';
+
     const spentOpen = !!this._spentOpen && breakdownItems.length > 0;
     const spentToggle = breakdownItems.length > 0
       ? `<button type="button" data-click="toggleSpentBreakdown" data-click-args='["@this"]' class="no-print flex-shrink-0 text-xs text-gray-500 hover:text-gray-700 px-2.5 py-1 rounded-lg border border-gray-200">${spentOpen ? 'Hide ▴' : 'Details ▾'}</button>`
@@ -824,7 +848,8 @@ class FleetApp {
         <div class="text-xs text-gray-500 uppercase font-semibold mb-1">Current Book Value</div>
         <div class="text-2xl font-bold text-slate-800">${this.cur()}${this.fmt(bookValue)}</div>
         <div class="mt-2 pt-2 border-t border-gray-100 text-xs text-gray-500 space-y-1">
-          <div class="flex justify-between items-center"><span>Initial Value:</span> <span class="font-medium text-slate-700">${this.cur()}${this.fmt(vehicle.initialValue || 0)}</span></div>
+          <div class="flex justify-between items-center">${ivLabel} <span class="font-medium text-slate-700">${this.cur()}${this.fmt(vehicle.initialValue || 0)}</span></div>
+          ${ivItems.length > 0 ? `<div id="initialBreakdown" class="no-print ${ivOpen ? '' : 'hidden'} pl-2 ml-0.5 border-l-2 border-gray-200 space-y-1 text-[11px] text-gray-500">${ivRowsHTML}</div>` : ''}
           <div class="flex justify-between items-center"><span>Depreciation:</span> <span class="font-medium text-blue-600">${this.cur()}${this.fmt(totalDepreciation)}</span></div>
         </div>
       </div>
