@@ -15,7 +15,7 @@ const DB_VERSION = 5;
 // and do NOT sync automatically — bump both together by hand on every
 // deploy. See the matching comment above CACHE_NAME in sw.js.
 // ---------------------------------------------------------------------
-const APP_VERSION = '1.10.2';
+const APP_VERSION = '1.10.3';
 const APP_VERSION_DATE = '2026-11-18';
 
 // Populate the badge as soon as this script runs — deliberately not inside
@@ -659,6 +659,17 @@ class FleetApp {
 
   renderVehicleSelector() {
     const container = document.getElementById('vehicleSelector');
+    const quick = document.getElementById('vehicleQuickNote');
+    if (quick) {
+      const cur = this.vehicles.find(x => x.id === this.currentVehicleId);
+      if (cur && cur.tyrePressure) {
+        quick.textContent = '🛞 Tyre pressure: ' + cur.tyrePressure;
+        quick.classList.remove('hidden');
+      } else {
+        quick.textContent = '';
+        quick.classList.add('hidden');
+      }
+    }
     if (this.vehicles.length === 0) {
       container.innerHTML = '<div class="text-gray-400 text-sm py-2">No vehicles yet. Click "Add Vehicle" to start.</div>';
       return;
@@ -772,13 +783,24 @@ class FleetApp {
       ? `<div class="mt-2 pt-2 border-t border-gray-100 text-xs text-gray-500 space-y-1">${breakdownItems.join('')}</div>` 
       : `<div class="text-xs text-gray-400 mt-1">No expenses recorded</div>`;
 
-    const lastKm = this.entries.reduce((max, e) => {
+    let lastKm = 0;
+    let lastKmDate = '';
+    this.entries.forEach(e => {
       const k = parseFloat(e.km);
-      return !isNaN(k) && k > max ? k : max;
-    }, 0);
+      if (isNaN(k)) return;
+      if (k > lastKm || (k === lastKm && e.date && e.date > lastKmDate)) {
+        lastKm = k;
+        lastKmDate = e.date || '';
+      }
+    });
     const bookValue = (vehicle.initialValue || 0) - totalDepreciation;
 
     container.innerHTML = `
+      <div class="dash-card bg-white rounded-xl p-5 border border-gray-200 shadow-sm">
+        <div class="text-xs text-gray-500 uppercase font-semibold mb-1">Last Odometer</div>
+        <div class="text-2xl font-bold text-slate-800">${this.fmt(lastKm, 0)} <span class="text-sm font-normal text-gray-400">km</span></div>
+        <div class="text-xs text-gray-400 mt-1">${lastKmDate ? this.formatDisplayDate(lastKmDate) + ' · ' : ''}${this.entries.length} entries</div>
+      </div>
       <div class="dash-card bg-white rounded-xl p-5 border border-gray-200 shadow-sm">
         <div class="text-xs text-gray-500 uppercase font-semibold mb-1">Current Book Value</div>
         <div class="text-2xl font-bold text-slate-800">${this.cur()}${this.fmt(bookValue)}</div>
@@ -795,11 +817,6 @@ class FleetApp {
         <div class="text-xs text-gray-500 uppercase font-semibold mb-1">Depreciation</div>
         <div class="text-2xl font-bold text-blue-600">${this.cur()}${this.fmt(totalDepreciation)}</div>
         <div class="text-xs text-gray-400 mt-1">Total written off</div>
-      </div>
-      <div class="dash-card bg-white rounded-xl p-5 border border-gray-200 shadow-sm">
-        <div class="text-xs text-gray-500 uppercase font-semibold mb-1">Last Odometer</div>
-        <div class="text-2xl font-bold text-slate-800">${this.fmt(lastKm, 0)} <span class="text-sm font-normal text-gray-400">km</span></div>
-        <div class="text-xs text-gray-400 mt-1">${this.entries.length} entries</div>
       </div>
     `;
   }
@@ -1161,6 +1178,7 @@ class FleetApp {
     document.getElementById('vehicleYear').value = '';
     document.getElementById('vehicleDutyStatus').value = '';
     document.getElementById('vehicleNotes').value = '';
+    document.getElementById('vehicleTyrePressure').value = '';
     document.getElementById('initialValueRows').innerHTML = '';
     this.addInitialValueRow();
     document.getElementById('vehicleModalTitle').textContent = 'Add Vehicle';
@@ -1180,6 +1198,7 @@ class FleetApp {
     document.getElementById('vehicleYear').value = v.year || '';
     document.getElementById('vehicleDutyStatus').value = v.dutyStatus || '';
     document.getElementById('vehicleNotes').value = v.notes || '';
+    document.getElementById('vehicleTyrePressure').value = v.tyrePressure || '';
     document.getElementById('initialValueRows').innerHTML = '';
     
     if (v.initialValueBreakdown && v.initialValueBreakdown.length > 0) {
@@ -1459,6 +1478,7 @@ class FleetApp {
       dutyStatus: document.getElementById('vehicleDutyStatus').value || '',
       initialValue: initialValueBreakdown.reduce((s, i) => s + (i.amount || 0), 0),
       initialValueBreakdown: initialValueBreakdown,
+      tyrePressure: document.getElementById('vehicleTyrePressure').value.trim(),
       notes: document.getElementById('vehicleNotes').value.trim()
     };
     if (!data.name) { this.toast('Vehicle name is required', 'error'); return; }
