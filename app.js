@@ -15,7 +15,7 @@ const DB_VERSION = 5;
 // and do NOT sync automatically — bump both together by hand on every
 // deploy. See the matching comment above CACHE_NAME in sw.js.
 // ---------------------------------------------------------------------
-const APP_VERSION = '1.10.7';
+const APP_VERSION = '1.10.8';
 const APP_VERSION_DATE = '2026-11-18';
 
 // Populate the badge as soon as this script runs — deliberately not inside
@@ -795,16 +795,25 @@ class FleetApp {
     });
 
     const totalCustomCosts = Object.values(customCategoryTotals).reduce((a, b) => a + b, 0);
-    const totalSpent = totalCost + totalPart + totalService + totalCustomCosts;
+    // Service Tax adds to, and Discount subtracts from, what was spent.
+    // Only maintenance / custom-expense entries count (bank loan instalments
+    // and depreciation entries are not part of Total Spent).
+    const spendEntries = this.entries.filter(e => e.type === 'maintenance' || e.type === 'other');
+    const totalServiceTax = spendEntries.reduce((s, e) => s + (parseFloat(e.serviceTax) || 0), 0);
+    const totalDiscount = spendEntries.reduce((s, e) => s + (parseFloat(e.discount) || 0), 0);
+    const totalSpent = totalCost + totalPart + totalService + totalServiceTax + totalCustomCosts - totalDiscount;
 
     let breakdownItems = [];
     if (totalCost > 0) breakdownItems.push(`<div class="flex justify-between items-center"><span>Cost:</span> <span class="font-medium text-slate-700">${this.cur()}${this.fmt(totalCost)}</span></div>`);
     if (totalPart > 0) breakdownItems.push(`<div class="flex justify-between items-center"><span>Part:</span> <span class="font-medium text-slate-700">${this.cur()}${this.fmt(totalPart)}</span></div>`);
     if (totalService > 0) breakdownItems.push(`<div class="flex justify-between items-center"><span>Service:</span> <span class="font-medium text-slate-700">${this.cur()}${this.fmt(totalService)}</span></div>`);
+    if (totalServiceTax > 0) breakdownItems.push(`<div class="flex justify-between items-center"><span>Service Tax:</span> <span class="font-medium text-slate-700">${this.cur()}${this.fmt(totalServiceTax)}</span></div>`);
     
     Object.keys(customCategoryTotals).forEach(cat => {
       breakdownItems.push(`<div class="flex justify-between items-center"><span>${this.escape(cat)}:</span> <span class="font-medium text-slate-700">${this.cur()}${this.fmt(customCategoryTotals[cat])}</span></div>`);
     });
+
+    if (totalDiscount > 0) breakdownItems.push(`<div class="flex justify-between items-center"><span>Discount:</span> <span class="font-medium text-red-600">&minus;${this.cur()}${this.fmt(totalDiscount)}</span></div>`);
 
     const breakdownHTML = breakdownItems.length > 0 
       ? `<div class="mt-2 pt-2 border-t border-gray-100 text-xs text-gray-500 space-y-1">${breakdownItems.join('')}</div>` 
@@ -906,13 +915,15 @@ class FleetApp {
     if (e.cost != null) items.push({ label: costLabel, value: e.cost, cls: 'text-slate-800 font-semibold' });
     if (e.part != null) items.push({ label: 'Part', value: e.part, cls: 'text-slate-700' });
     if (e.service != null) items.push({ label: 'Service', value: e.service, cls: 'text-slate-700' });
+    if (e.serviceTax != null) items.push({ label: 'Service Tax', value: e.serviceTax, cls: 'text-slate-700' });
+    if (e.discount != null) items.push({ label: 'Discount', value: e.discount, cls: 'text-red-600', neg: true });
     if (e.depreciation != null) items.push({ label: 'Depr.', value: e.depreciation, cls: 'text-blue-600 font-medium' });
 
     if (items.length === 0) return '<span class="text-gray-300 text-xs">—</span>';
     return `<div class="space-y-0.5">${items.map(i => `
       <div class="flex justify-between items-baseline gap-3 text-xs">
         <span class="text-gray-500">${this.escape(i.label)}:</span>
-        <span class="${i.cls} font-mono">${this.cur()}${this.fmt(i.value)}</span>
+        <span class="${i.cls} font-mono">${i.neg ? '&minus;' : ''}${this.cur()}${this.fmt(i.value)}</span>
       </div>`).join('')}</div>`;
   }
 
@@ -1654,6 +1665,8 @@ class FleetApp {
     document.getElementById('entryCost').value = '';
     document.getElementById('entryPart').value = '';
     document.getElementById('entryService').value = '';
+    document.getElementById('entryServiceTax').value = '';
+    document.getElementById('entryDiscount').value = '';
     document.getElementById('entryDepreciation').value = '';
     
     const titles = { maintenance: 'Add Maintenance Entry', depreciation: 'Add Depreciation Entry', other: 'Add Custom Expense Entry' };
@@ -1690,6 +1703,8 @@ class FleetApp {
     document.getElementById('entryCost').value = e.cost != null ? e.cost : '';
     document.getElementById('entryPart').value = e.part != null ? e.part : '';
     document.getElementById('entryService').value = e.service != null ? e.service : '';
+    document.getElementById('entryServiceTax').value = e.serviceTax != null ? e.serviceTax : '';
+    document.getElementById('entryDiscount').value = e.discount != null ? e.discount : '';
     document.getElementById('entryDepreciation').value = e.depreciation != null ? e.depreciation : '';
     
     document.getElementById('entryModalTitle').textContent = 'Edit Entry';
@@ -1718,6 +1733,8 @@ class FleetApp {
       cost: document.getElementById('entryCost').value !== '' ? parseFloat(document.getElementById('entryCost').value) : null,
       part: document.getElementById('entryPart').value !== '' ? parseFloat(document.getElementById('entryPart').value) : null,
       service: document.getElementById('entryService').value !== '' ? parseFloat(document.getElementById('entryService').value) : null,
+      serviceTax: document.getElementById('entryServiceTax').value !== '' ? parseFloat(document.getElementById('entryServiceTax').value) : null,
+      discount: document.getElementById('entryDiscount').value !== '' ? parseFloat(document.getElementById('entryDiscount').value) : null,
       depreciation: document.getElementById('entryDepreciation').value !== '' ? parseFloat(document.getElementById('entryDepreciation').value) : null
     };
 
