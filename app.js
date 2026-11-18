@@ -15,7 +15,7 @@ const DB_VERSION = 5;
 // and do NOT sync automatically — bump both together by hand on every
 // deploy. See the matching comment above CACHE_NAME in sw.js.
 // ---------------------------------------------------------------------
-const APP_VERSION = '1.10.5';
+const APP_VERSION = '1.10.6';
 const APP_VERSION_DATE = '2026-11-18';
 
 // Populate the badge as soon as this script runs — deliberately not inside
@@ -822,6 +822,29 @@ class FleetApp {
     });
     const bookValue = (vehicle.initialValue || 0) - totalDepreciation;
 
+    // Latest entry flagged "Battery replaced" (newest date; then higher KM; then newer id)
+    const batt = this.entries
+      .filter(e => e.type === 'maintenance' && e.batteryReplaced && e.date)
+      .sort((x, y) => (y.date > x.date ? 1 : y.date < x.date ? -1 : 0)
+        || ((parseFloat(y.km) || 0) - (parseFloat(x.km) || 0)) || (y.id - x.id))[0];
+    let battHTML = '';
+    if (batt) {
+      const bk = parseFloat(batt.km);
+      const hasKm = batt.km != null && batt.km !== '' && !isNaN(bk);
+      const since = [];
+      if (hasKm && lastKm >= bk) since.push('+' + this.fmt(lastKm - bk, 0) + ' km');
+      const bd = new Date(batt.date + 'T00:00:00');
+      const now = new Date();
+      if (!isNaN(bd)) {
+        let mo = (now.getFullYear() - bd.getFullYear()) * 12 + (now.getMonth() - bd.getMonth());
+        if (now.getDate() < bd.getDate()) mo--;
+        if (mo < 0) mo = 0;
+        since.push(mo >= 12 ? Math.floor(mo / 12) + ' yr' + (mo % 12 ? ' ' + (mo % 12) + ' mo' : '') : mo + ' mo');
+      }
+      battHTML = `<div class="text-xs text-gray-400 mt-1">🔋 Battery: ${this.formatDisplayDate(batt.date)}${hasKm ? ' · ' + this.fmt(bk, 0) + ' km' : ''}</div>`
+        + (since.length ? `<div class="text-xs text-gray-400">since: ${since.join(' · ')}</div>` : '');
+    }
+
     const ivItems = (vehicle.initialValueBreakdown || []).filter(i => i.label || i.amount || i.date);
     const ivOpen = !!this._initOpen && ivItems.length > 0;
     const ivRowsHTML = ivItems.map(i => {
@@ -843,6 +866,7 @@ class FleetApp {
         <div class="text-xs text-gray-500 uppercase font-semibold mb-1">Last Odometer</div>
         <div class="text-2xl font-bold text-slate-800">${this.fmt(lastKm, 0)} <span class="text-sm font-normal text-gray-400">km</span></div>
         <div class="text-xs text-gray-400 mt-1">${lastKmDate ? this.formatDisplayDate(lastKmDate) + ' · ' : ''}${this.entries.length} entries</div>
+        ${battHTML}
       </div>
       <div class="dash-card bg-white rounded-xl p-4 sm:p-5 border border-gray-200 shadow-sm">
         <div class="text-xs text-gray-500 uppercase font-semibold mb-1">Current Book Value</div>
@@ -1610,6 +1634,8 @@ class FleetApp {
       customCatContainer.classList.add('hidden');
     }
 
+    document.getElementById('batteryRow').classList.toggle('hidden', type !== 'maintenance');
+    document.getElementById('entryBattery').checked = false;
     document.getElementById('entryDate').value = this.localDateStr();
     document.getElementById('entryKm').value = '';
     document.getElementById('entrySupplier').value = '';
@@ -1643,6 +1669,8 @@ class FleetApp {
       document.getElementById('entryCategoryName').value = '';
     }
 
+    document.getElementById('batteryRow').classList.toggle('hidden', (e.type || 'maintenance') !== 'maintenance');
+    document.getElementById('entryBattery').checked = !!e.batteryReplaced;
     document.getElementById('entryDate').value = e.date || '';
     document.getElementById('entryKm').value = e.km != null ? e.km : '';
     document.getElementById('entrySupplier').value = e.supplier || '';
@@ -1673,6 +1701,7 @@ class FleetApp {
       km: document.getElementById('entryKm').value !== '' ? parseFloat(document.getElementById('entryKm').value) : null,
       supplier: document.getElementById('entrySupplier').value.trim(),
       particulars: document.getElementById('entryParticulars').value.trim(),
+      batteryReplaced: type === 'maintenance' && document.getElementById('entryBattery').checked,
       cost: document.getElementById('entryCost').value !== '' ? parseFloat(document.getElementById('entryCost').value) : null,
       part: document.getElementById('entryPart').value !== '' ? parseFloat(document.getElementById('entryPart').value) : null,
       service: document.getElementById('entryService').value !== '' ? parseFloat(document.getElementById('entryService').value) : null,
