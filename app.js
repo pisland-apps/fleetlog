@@ -15,8 +15,8 @@ const DB_VERSION = 5;
 // and do NOT sync automatically — bump both together by hand on every
 // deploy. See the matching comment above CACHE_NAME in sw.js.
 // ---------------------------------------------------------------------
-const APP_VERSION = '1.10.0';
-const APP_VERSION_DATE = '2026-11-17';
+const APP_VERSION = '1.10.1';
+const APP_VERSION_DATE = '2026-11-18';
 
 // Populate the badge as soon as this script runs — deliberately not inside
 // the DOMContentLoaded handler further down, so it appears immediately and
@@ -1212,17 +1212,76 @@ class FleetApp {
     document.getElementById(inputId).click();
   }
 
-  addFilesToAttachments(scope, fileList) {
-    const arr = scope === 'entry' ? this.entryAttachments : this.vehicleAttachments;
-    for (const file of fileList) {
-      if (!this.isAllowedAttachmentFile(file)) {
-        this.toast(`"${file.name}" isn't an accepted attachment type (images, PDF, or Word docs only)`, 'error');
+  // v1.10.1: images are downscaled + re-encoded as JPEG before they are
+  // stored, because phone photos (3-5 MB each) made the encrypted backup
+  // — and therefore every Google Drive upload — huge. Receipts and
+  // service records stay perfectly readable at 1600px / quality 0.8.
+  // Only still raster formats the browser can decode are touched
+  // (jpeg/png/webp/bmp); GIF (may be animated), SVG, HEIC and anything
+  // that fails to decode are stored exactly as picked, as before.
+  // If re-encoding wouldn't make the file smaller, the original is kept.
+  static get IMG_MAX_DIM() { return 1600; }
+  static get IMG_QUALITY() { return 0.8; }
+  static get IMG_SKIP_BELOW() { return 300 * 1024; } // already small enough
+
+  async compressImageFile(file) {
+    const type = (file.type || '').toLowerCase();
+    if (!/^image\/(jpeg|jpg|png|webp|bmp)$/.test(type)) return file;
+    if (file.size <= FleetApp.IMG_SKIP_BELOW) return file;
+    try {
+      let bmp;
+      try {
+        bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+      } catch (e) {
+        bmp = await createImageBitmap(file);
+      }
+      const maxDim = FleetApp.IMG_MAX_DIM;
+      const scale = Math.min(1, maxDim / Math.max(bmp.width, bmp.height));
+      const w = Math.max(1, Math.round(bmp.width * scale));
+      const h = Math.max(1, Math.round(bmp.height * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      // JPEG has no alpha: paint white first so transparent PNGs don't go black.
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(bmp, 0, 0, w, h);
+      if (bmp.close) bmp.close();
+      const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', FleetApp.IMG_QUALITY));
+      canvas.width = canvas.height = 0; // release the canvas memory
+      if (!blob || blob.size >= file.size) return file;
+      const base = (file.name || 'image').replace(/\.[^.\\/]+$/, '');
+      return new File([blob], base + '.jpg', { type: 'image/jpeg', lastModified: Date.now() });
+    } catch (e) {
+      console.warn('Image compression skipped for', file && file.name, e);
+      return file;
+    }
+  }
+
+  async addFilesToAttachments(scope, fileList) {
+    // Copy the FileList right away: callers clear input.value straight
+    // after this returns, which empties the live FileList in some browsers
+    // while we are still awaiting compression below.
+    const files = Array.from(fileList || []);
+    const workingArr = () => scope === 'entry' ? this.entryAttachments : this.vehicleAttachments;
+    let savedBytes = 0;
+    for (const original of files) {
+      if (!this.isAllowedAttachmentFile(original)) {
+        this.toast(`"${original.name}" isn't an accepted attachment type (images, PDF, or Word docs only)`, 'error');
         continue;
       }
+      const file = await this.compressImageFile(original);
+      if (file !== original) savedBytes += original.size - file.size;
+      // Size limit applies to what will actually be stored.
       if (!this.checkFileSize(file)) continue;
-      arr.push({ name: file.name, type: file.type, data: file });
+      workingArr().push({ name: file.name, type: file.type, data: file });
+      this.renderAttachmentChips(scope);
     }
     this.renderAttachmentChips(scope);
+    if (savedBytes > 100 * 1024) {
+      this.toast('Images compressed — saved ' + this.fmt(savedBytes / (1024 * 1024), 1) + ' MB');
+    }
   }
 
   removeAttachment(scope, index) {
