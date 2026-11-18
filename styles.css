@@ -129,6 +129,7 @@
     @page { size: A4 landscape; margin: 10mm; }
     body { background: white !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .no-print { display: none !important; }
+    .spent-breakdown { display: block !important; }
     .print-only { display: block !important; }
     main { max-width: 100% !important; padding: 0 !important; margin: 0 !important; }
     .shadow, .shadow-sm, .shadow-lg, .shadow-md { box-shadow: none !important; }

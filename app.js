@@ -15,7 +15,7 @@ const DB_VERSION = 5;
 // and do NOT sync automatically — bump both together by hand on every
 // deploy. See the matching comment above CACHE_NAME in sw.js.
 // ---------------------------------------------------------------------
-const APP_VERSION = '1.10.3';
+const APP_VERSION = '1.10.4';
 const APP_VERSION_DATE = '2026-11-18';
 
 // Populate the badge as soon as this script runs — deliberately not inside
@@ -694,6 +694,20 @@ class FleetApp {
     }).join('');
   }
 
+  toggleHeaderMenu() {
+    const m = document.getElementById('headerMoreMenu');
+    if (!m) return;
+    m.classList.toggle('hidden');
+    m.classList.toggle('grid');
+  }
+
+  toggleSpentBreakdown(btn) {
+    this._spentOpen = !this._spentOpen;
+    const box = document.getElementById('spentBreakdown');
+    if (box) box.classList.toggle('hidden', !this._spentOpen);
+    if (btn) btn.innerHTML = this._spentOpen ? 'Hide ▴' : 'Details ▾';
+  }
+
   showVehicleTooltip(card, vehicleId) {
     const v = this.vehicles.find(x => x.id === vehicleId);
     if (!v) return;
@@ -795,28 +809,34 @@ class FleetApp {
     });
     const bookValue = (vehicle.initialValue || 0) - totalDepreciation;
 
+    const spentOpen = !!this._spentOpen && breakdownItems.length > 0;
+    const spentToggle = breakdownItems.length > 0
+      ? `<button type="button" data-click="toggleSpentBreakdown" data-click-args='["@this"]' class="no-print flex-shrink-0 text-xs text-gray-500 hover:text-gray-700 px-2.5 py-1 rounded-lg border border-gray-200">${spentOpen ? 'Hide ▴' : 'Details ▾'}</button>`
+      : '';
+
     container.innerHTML = `
-      <div class="dash-card bg-white rounded-xl p-5 border border-gray-200 shadow-sm">
+      <div class="dash-card bg-white rounded-xl p-4 sm:p-5 border border-gray-200 shadow-sm">
         <div class="text-xs text-gray-500 uppercase font-semibold mb-1">Last Odometer</div>
         <div class="text-2xl font-bold text-slate-800">${this.fmt(lastKm, 0)} <span class="text-sm font-normal text-gray-400">km</span></div>
         <div class="text-xs text-gray-400 mt-1">${lastKmDate ? this.formatDisplayDate(lastKmDate) + ' · ' : ''}${this.entries.length} entries</div>
       </div>
-      <div class="dash-card bg-white rounded-xl p-5 border border-gray-200 shadow-sm">
+      <div class="dash-card bg-white rounded-xl p-4 sm:p-5 border border-gray-200 shadow-sm">
         <div class="text-xs text-gray-500 uppercase font-semibold mb-1">Current Book Value</div>
         <div class="text-2xl font-bold text-slate-800">${this.cur()}${this.fmt(bookValue)}</div>
-        <div class="text-xs text-gray-400 mt-1">Initial Value: ${this.cur()}${this.fmt(vehicle.initialValue || 0)}</div>
-      </div>
-      <div class="dash-card bg-white rounded-xl p-5 border border-gray-200 shadow-sm flex flex-col justify-between">
-        <div>
-          <div class="text-xs text-gray-500 uppercase font-semibold mb-1">Total Spent</div>
-          <div class="text-2xl font-bold text-emerald-600">${this.cur()}${this.fmt(totalSpent)}</div>
+        <div class="mt-2 pt-2 border-t border-gray-100 text-xs text-gray-500 space-y-1">
+          <div class="flex justify-between items-center"><span>Initial Value:</span> <span class="font-medium text-slate-700">${this.cur()}${this.fmt(vehicle.initialValue || 0)}</span></div>
+          <div class="flex justify-between items-center"><span>Depreciation:</span> <span class="font-medium text-blue-600">${this.cur()}${this.fmt(totalDepreciation)}</span></div>
         </div>
-        ${breakdownHTML}
       </div>
-      <div class="dash-card bg-white rounded-xl p-5 border border-gray-200 shadow-sm">
-        <div class="text-xs text-gray-500 uppercase font-semibold mb-1">Depreciation</div>
-        <div class="text-2xl font-bold text-blue-600">${this.cur()}${this.fmt(totalDepreciation)}</div>
-        <div class="text-xs text-gray-400 mt-1">Total written off</div>
+      <div class="dash-card bg-white rounded-xl p-4 sm:p-5 border border-gray-200 shadow-sm flex flex-col justify-between">
+        <div class="flex items-start justify-between gap-2">
+          <div>
+            <div class="text-xs text-gray-500 uppercase font-semibold mb-1">Total Spent</div>
+            <div class="text-2xl font-bold text-emerald-600">${this.cur()}${this.fmt(totalSpent)}</div>
+          </div>
+          ${spentToggle}
+        </div>
+        <div id="spentBreakdown" class="spent-breakdown ${breakdownItems.length === 0 || spentOpen ? '' : 'hidden'}">${breakdownHTML}</div>
       </div>
     `;
   }
@@ -2174,6 +2194,13 @@ document.addEventListener('DOMContentLoaded', () => {
   app = new FleetApp();
   app.init();
 
+  document.getElementById('headerMoreMenu').addEventListener('click', e => {
+    if (e.target.closest('button')) {
+      const m = document.getElementById('headerMoreMenu');
+      m.classList.add('hidden');
+      m.classList.remove('grid');
+    }
+  });
   document.getElementById('exportModal').addEventListener('click', e => { if (e.target === e.currentTarget) app.closeModal('exportModal'); });
   document.getElementById('vehicleModal').addEventListener('click', e => { if (e.target === e.currentTarget) app.closeModal('vehicleModal'); });
   document.getElementById('entryModal').addEventListener('click', e => { if (e.target === e.currentTarget) app.closeModal('entryModal'); });

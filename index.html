@@ -162,7 +162,7 @@
         </div>
       </div>
       <div class="w-full sm:w-auto flex flex-col sm:flex-row sm:items-center sm:flex-wrap gap-2">
-        <div class="grid grid-cols-2 sm:contents gap-2">
+        <div id="headerMoreMenu" class="hidden grid-cols-2 sm:contents gap-2 order-2 sm:order-none">
           <select id="printOrientation" data-change="setPrintOrientation" data-change-args='["@value"]' class="w-full sm:w-auto px-2 py-1.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition">
             <option value="landscape" selected>↔️ Landscape</option>
             <option value="portrait">↕️ Portrait</option>
@@ -190,15 +190,17 @@
             <input type="file" id="importFile" class="hidden" accept=".json" data-change="importData" data-change-args='["@this"]'>
           </label>
           <button data-click="showAddVehicle" class="w-full sm:w-auto px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-900 font-semibold rounded-lg transition">＋ Add Vehicle</button>
+          <button data-click="showChangePasscodeModal" class="sm:hidden col-span-2 w-full px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition">🔑 Change Passcode</button>
         </div>
         <!-- Icon-only utility buttons kept together in their own row on
              mobile (flex-1 so the 2 buttons split the row evenly, no gap)
              instead of trailing unevenly at the end of the action grid
              above. sm:contents dissolves this wrapper on desktop so the
              buttons fall back in line with everything else, unchanged. -->
-        <div class="flex gap-2 sm:contents">
+        <div class="flex gap-2 sm:contents order-1 sm:order-none">
           <button id="driveBtn" data-click="showDriveModal" class="relative flex-1 sm:flex-none text-center px-3 py-2 sm:py-1.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition" title="Google Drive sync">☁️<span id="driveDot" class="hidden absolute top-1 right-1 w-2 h-2 rounded-full" style="background:#94a3b8"></span></button>
-          <button data-click="showChangePasscodeModal" class="flex-1 sm:flex-none text-center px-3 py-2 sm:py-1.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition" title="Change Passcode">🔑</button>
+          <button data-click="toggleHeaderMenu" class="flex-1 sm:hidden text-center px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition font-bold" title="More actions" aria-label="More actions">⋯</button>
+          <button data-click="showChangePasscodeModal" class="hidden sm:block sm:flex-none text-center px-3 py-2 sm:py-1.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition" title="Change Passcode">🔑</button>
           <button data-click="lockApp" class="flex-1 sm:flex-none text-center px-3 py-2 sm:py-1.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm transition text-amber-400" title="Lock App">🔒</button>
         </div>
       </div>
@@ -214,7 +216,7 @@
   <main class="max-w-7xl mx-auto px-4 py-6">
     <div id="vehicleSelector" class="mb-6 flex gap-3 overflow-x-auto pt-2 pb-2 scrollbar-hide snap-x snap-mandatory no-print"></div>
     <div id="vehicleQuickNote" class="hidden -mt-3 mb-5 px-1 text-sm text-slate-600 no-print"></div>
-    <div id="dashboardRow" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4 mb-6">
+    <div id="dashboardRow" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4 mb-6">
       <div id="dashboard" class="contents"></div>
 
       <!-- Vehicle Info Card (top row, alongside Current Book Value) -->
